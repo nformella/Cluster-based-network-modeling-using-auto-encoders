@@ -4,6 +4,8 @@ Modules and functions to build and train an autoencoder.
 Classes:
 
     AE(AE, int, list, list)
+    ConvBlock()
+    ConvTBlock()
     LinearBlock()
 
 Functions:
@@ -20,10 +22,32 @@ from helper_functions import num_elements
 import torch.nn as nn
 import torch as pt
 import torch.optim as optim
-import matplotlib.pyplot as plt
 
 
 class ConvBlock(nn.Module):
+    """    
+    Class adds a block with a convolutional layer followed by an 
+    activation function to the neural network.
+
+    ...
+
+    Attributes
+    ----------
+    in_channels : int
+        input channels
+    kernel_size: int or tupel
+        kernel size
+    out_channels : int
+        output channels
+    activation : function
+        nonlinearity/activation function
+
+    Methods
+    -------
+    forward(x):
+        Passes input through the convolutional block.
+    """
+
     def __init__(self, in_channels, out_channels, kernel_size, 
                                                         activation):
         super(ConvBlock, self).__init__()
@@ -35,8 +59,32 @@ class ConvBlock(nn.Module):
 
 
 class ConvTBlock(nn.Module):
+    """    
+    Class adds a block with a transposed convolutional layer 
+    followed by an activation function to the neural network.
+
+    ...
+
+    Attributes
+    ----------
+    in_channels : int
+        input channels
+    kernel_size: int or tupel
+        kernel size
+    out_nchannels : int
+        output channels
+    activation : function
+        nonlinearity/activation function
+
+    Methods
+    -------
+    forward(x):
+        Passes input through the convolutional block.
+    """
+
     def __init__(self, in_channels, out_channels, kernel_size, 
                                                         activation):
+         
         super(ConvTBlock, self).__init__()
         self.conv = nn.ConvTranspose1d(in_channels, out_channels, kernel_size)
         self.conv_activation = activation
@@ -105,7 +153,22 @@ class LinearBlock(nn.Module):
 
 class AE(nn.Module):
     def __init__(self, input_shape, architecture, activations, 
-                                                kernel_size=100):
+                                                kernel_size=50):
+        """
+        Create an autoencoder object derived from torch.nn.Module.
+
+        Parameters
+        ----------
+            input_shape : int
+                input features
+            architecture : list
+                List with network layers
+            activations : list
+                List with nonlinearity/activation functions 
+            kernel_size : int
+                Size of the convolving kernel. Default: 50
+
+        """
         super(AE, self).__init__()
 
         self.layers = architecture.copy()
@@ -130,7 +193,8 @@ class AE(nn.Module):
             raise ValueError("Number of activations must equal \
                         number of hidden self.layers + output layer!")
         
-        # Construct each layer followed by an activation function
+        # Construct each layer followed by an activation function and
+        # store it in self.blocks
         self.blocks = nn.ModuleList()
 
         lout = 0
@@ -148,17 +212,18 @@ class AE(nn.Module):
             previous = self.layers[0][0]
             for i in range(0, len(self.layers[0])-1):
                 self.blocks.append(ConvBlock(previous, 
-                                                self.layers[0][i+1], 
-                                                kernel_size, 
-                                                activations[unnested_idx]))
+                                            self.layers[0][i+1], 
+                                            kernel_size, 
+                                            activations[unnested_idx]))
                 
                 unnested_idx += 1
                 previous = self.layers[0][i+1]
                 # Calculate number of flat features
                 if i == 0:
-                    lout = self.num_flat_features(input_shape, kernel_size)
+                    lout = self.num_flat_features_conv(input_shape, 
+                                                        kernel_size)
                 else:
-                    lout = self.num_flat_features(lout, kernel_size)
+                    lout = self.num_flat_features_conv(lout, kernel_size)
 
             self.flatten1 = nn.Flatten() 
 
@@ -173,13 +238,13 @@ class AE(nn.Module):
         for i in range(list_idx, len(self.layers)):
 
             if i+1 == len(self.layers) or self.layers[i] == 0 \
-                                        or type(self.layers[i+1]) == list:
+                                    or type(self.layers[i+1]) == list:
                 
                 if type(self.layers[0]) == list and i+1 == len(self.layers):
                     in_neurons = input_shape
 
-                self.blocks.append(LinearBlock(previous, 
-                                        in_neurons, activations[unnested_idx]))
+                self.blocks.append(LinearBlock(previous, in_neurons, 
+                                            activations[unnested_idx]))
                 
                 unnested_idx += 1
                 list_idx += 1
@@ -204,8 +269,8 @@ class AE(nn.Module):
         previous = self.layers[list_idx][0]       
         for i in range(0, len(self.layers[list_idx])-1):
             self.blocks.append(ConvTBlock(previous, 
-                                            self.layers[list_idx][i+1], 
-                                            kernel_size, activations[unnested_idx]))
+                                        self.layers[list_idx][i+1], 
+                                        kernel_size, activations[unnested_idx]))
             unnested_idx += 1
             previous = self.layers[list_idx][i+1]
             # Calculate number of flat features
@@ -277,8 +342,32 @@ class AE(nn.Module):
         return x
 
 
-    def num_flat_features(self, input_shape, kernel_size, stride=1, pad=0, 
+    def num_flat_features_conv(self, input_shape, kernel_size, stride=1, pad=0, 
                                                                 dilation=1):
+        """
+        Takes in the input_shape, kernel_size, stride, pad, dilation and 
+        returns the calculated height after a convolutional block.
+
+        Parameters
+        ----------
+            
+            dilation: int or tuple, optional
+                Spacing between kernel elements. Default: 1
+            input_shape : int
+                Height of data points
+            kernel_size : int or tuple
+                Size of the convolving kernel.
+            pad: int or tuple, optional
+                Zero-padding added to both sides of the input. Default: 0
+            stride: int or tuple, optional
+                Stride of the convolution. Default: 1  
+
+        Returns
+        ----------
+            lout : int
+                Height of data points  
+          
+        """
 
         lout = (input_shape + (2 * pad) - (dilation * (kernel_size - 1)) \
                                                     - 1)// stride + 1
@@ -288,6 +377,31 @@ class AE(nn.Module):
 
     def num_flat_features_convt(self, lin, kernel_size, stride=1, pad=0, 
                                                 dilation=1, out_pad=0):
+        """
+        Takes in a height of data points, kernel_size, stride, pad, dilation 
+        and returns the calculated height after a transposed convolutional 
+        block.
+
+        Parameters
+        ----------
+            
+            dilation: int or tuple, optional
+                Spacing between kernel elements. Default: 1
+            input_shape : int
+                Height of data points
+            kernel_size : int or tuple
+                Size of the convolving kernel. Default: 1
+            out_pad: int or tuple, optional
+                Zero-padding added to both sides of the input. Default: 0
+            stride: int or tuple, optional
+                Stride of the convolution. Default: 1  
+
+        Returns
+        ----------
+            lout : int
+                Height of data points  
+          
+        """
 
         lout = (lin -1)  * stride - 2 * pad  + dilation * (kernel_size - 1) \
                                                     +  out_pad + 1
@@ -296,7 +410,34 @@ class AE(nn.Module):
 
 
                                                                                 
-def build_model(X, architecture, activations, kernel_size):
+def build_model(X, architecture, activations, kernel_size=50):
+    """
+    Creates a model from the `AE` autoencoder class and loads it to the 
+    specified device, either gpu or cpu.
+        
+        Parameters
+        ----------
+            
+            
+            activations: list
+                Storing information about the activation functions
+            architecture: list
+                Information about the number of filters and neurons
+            kernel_size : int or tuple, optional
+                Size of the convolving kernel. Default: 50
+            X: tensor
+                Data matrix containing the snapshots [input_features, 
+                                                            snapshots] 
+
+        Returns
+        ----------
+            
+            model : AE
+                Autoencoder class
+            device : AE
+                Device that the autoencoder class is loaded to  
+          
+        """
 
     #  use gpu if available
     device = pt.device("cuda" if pt.cuda.is_available() else "cpu")
@@ -314,7 +455,34 @@ def build_model(X, architecture, activations, kernel_size):
 
 
 def prep_training(X, model, learning_rate, batch_size=1):
+    """
+    Prepares the training process by creating an optimizer object, 
+    defining the training loss and loading the training data.
+        
+        Parameters
+        ----------
+            
+            batch_size: int
+                Batch size for training. Default: 1
+            learning_rate: float
+                Dictates the learning rate during training
+            model: AE
+                Autoencoder class defining the models being trained
+            X: tensor
+                Data matrix containing the snapshots [input_features, 
+                                                    number of snapshots] 
 
+        Returns
+        ----------
+            
+            criterion : criterion
+                Applied criterion in optimaization process
+            optimizer : optimizer
+                Applied optimizer            
+            train_loader : DataLoader
+                Training data    
+        """
+   
     # create an optimizer object
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -330,9 +498,39 @@ def prep_training(X, model, learning_rate, batch_size=1):
     return optimizer, criterion, train_loader
 
 
-''' function to train autoencoder for specified number of epochs '''
 def train_ae(model, epochs, train_loader, input_shape, optimizer, 
                                 criterion, device, print_reconLoss):
+    """
+    Trains the autoencoder for a specified number of epochs. Therefore, 
+    mini-batch data is loaded to the active device, a reconstruction is
+    calculated and backpropagation is performed based on the output and
+    chosen criterion. Each training loss per epoch is stored and returned
+    in a list.
+        
+        Parameters
+        ----------
+            
+            criterion: criterion
+                Criterion being used to calculate the loss, e.g., MSE
+            device: device
+                Determines if CPU or GPU is being used   
+            epochs: int
+                Defines the number of epochs that the model is trained
+            input_shape: int
+                Given input features   
+            model: AE
+                Autoencoder class defining the model being trained
+            optimizer: optimizer
+                perform parameter update based on current gradients
+            print_reconloss: Boolean
+                If true the training loss per epoch is printed in real time
+
+        Returns
+        ----------
+            
+            loss_values : list
+                Contains a history of the calculated epoch training loss.  
+        """
 
     loss_values = []
     for epoch in range(epochs):
@@ -340,7 +538,6 @@ def train_ae(model, epochs, train_loader, input_shape, optimizer,
         for batch_features in train_loader:
             # Reshape mini-batch data to [N, input_shape] matrix and load 
             # it to the active device
-            #batch_features = batch_features.view(-1, 1, input_shape).to(device)
             batch_features = batch_features.view(-1, input_shape).to(device)
 
             # Reset the gradients back to zero
@@ -367,7 +564,8 @@ def train_ae(model, epochs, train_loader, input_shape, optimizer,
         
         # display the epoch training loss
         if print_reconLoss == True:
-            print("epoch : {}/{}, recon loss = {:.8f}".format(epoch + 1, epochs, loss))
+            print("epoch : {}/{}, recon loss = {:.8f}".format(epoch + 1, 
+                                                            epochs, loss))
 
         loss_values.append(loss)
     
