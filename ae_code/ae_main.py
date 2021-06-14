@@ -91,14 +91,14 @@ import itertools
 ##------------------------- USER DEFINED PARAMETERS ------------------------##
 
   
-code = 10
+code = 8
 kernel_size = [100]
 
 ae_architecture = [
 #[[1, 6, 12], code, 0, [12, 6, 1], 1000],
-[[1, 6, 12], code, 0, [12,6,1]],
-#[[1, 6, 12], code, 100],
-[80,code,80],
+#[[1, 6, 12], code, 0, [12,6,1]],
+[[1, 6, 12], code, 100],
+[100,code,100],
 ]
 activations = [
 #[pt.relu, pt.relu, pt.tanh, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
@@ -111,7 +111,7 @@ batch_size = [10
 learning_rate = [1e-4]
 
 # global training settings
-epochs = 100
+epochs = 5000
 
 # Set figure options for plotting
 plot_every = 10
@@ -185,7 +185,7 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
             previous_paras = paras
             # same_except_kernel count in case the first two
             # fully connected layers are the same and previous_paras == 
-            # [0,0,0,0,0]!
+            # [0,0,0,0,0]
             same_except_kernel += 1
             count_models += 1
     
@@ -316,3 +316,8 @@ with pt.no_grad():
 axes[len(axes)-1].set_xlabel(r"$x$")
 plt.show()
 
+#for name, param in aemodel.named_parameters():
+#    print(f"Layer: {name} | Size: {param.size()} | Values : {param[:2]} \n")
+
+for i, aemodel in enumerate(aemodels):
+    print('\n\nModel ' + str(i+1) + ':\n\n', aemodel)    
