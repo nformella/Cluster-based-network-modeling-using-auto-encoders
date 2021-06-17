@@ -4,7 +4,9 @@ Build and evaluate autoencoder models.
 All possible combinations of autoencoder models are build based on user input. 
 Just add and change parameters in the user defined paramaters section.
  Training loss and output for each model are plotted for user defined 
-input data.
+input data. The results are saved in a user defined folder without 
+overwriting previous results. A random id is given to each set of 
+parameters to not mix them up. Results are not saved if they already exist.
 
 Variables to be defined by the user:
 
@@ -46,6 +48,9 @@ Variables to be defined by the user:
     print_reckonloss:   If True, numerical values for the reconstruction loss 
                         are printed
 
+    save_results_in:    Ths specifies the relative path where results are saved. 
+
+
 Example:
 
     4 (batch_size 5) + 4 (batch_size 10) = 8 autoencoder models will be build
@@ -77,6 +82,7 @@ Example:
 
 '''
 
+import os
 from helper_functions import num_elements
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -86,17 +92,19 @@ from ae_and_train import build_model, prep_training, train_ae
 from test_data import create_test_data
 import copy
 import itertools
+import random
 
 
 ##------------------------- USER DEFINED PARAMETERS ------------------------##
 
-  
+save_results_in = "results/output/"     
+
 code = 8
 kernel_size = [100]
 
 ae_architecture = [
 #[[1, 6, 12], code, 0, [12, 6, 1], 1000],
-#[[1, 6, 12], code, 0, [12,6,1]],
+[[1, 6, 12], code, 0, [12,6,1]],
 [[1, 6, 12], code, 100],
 [100,code,100],
 ]
@@ -111,7 +119,7 @@ batch_size = [10
 learning_rate = [1e-4]
 
 # global training settings
-epochs = 5000
+epochs = 100
 
 # Set figure options for plotting
 plot_every = 10
@@ -139,6 +147,10 @@ pt.backends.cudnn.deterministic = True
 
 ##---------------------------------- END -----------------------------------##
 
+
+# creates folder to store files
+if not os.path.exists(save_results_in):
+    os.makedirs(save_results_in)
 
 # Get matrix X that contains snapshots of the input signal at different
 # time steps 
@@ -222,12 +234,13 @@ test_dataset, batch_size=datapnts_at_t, shuffle=False
 )
 
 marker = itertools.cycle((',', '+', '.', 'o', '*'))
-fig = plt.figure()
+fig_loss = plt.figure()
 ax = plt.subplot(111)
 
 parameters_str = []
 index = 0
 same_except_kernel = 0
+randomnumbers = []
 for paras in itertools.product(ae_architecture, activations, kernel_size,
                                                 learning_rate, batch_size):
     
@@ -247,11 +260,16 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
 
             model_activations_str += activation_as_str
         
+        parameters = []
         if type(paras[0][0]) == list:
-            legend_name = str(paras[0]) + ', [' + str(model_activations_str) \
-                                    + '], lr= ' + str(paras[3]) \
-                                    + ', bs= ' + str(paras[4]) \
-                                    + ', ks= ' + str(paras[2])
+
+            randomnumber = random.randint(1, 10000)
+            randomnumbers.append(randomnumber)
+            parameters = str(paras[0]) + ',\n[' + str(model_activations_str) + '],'\
+                                    + '\nbatch_size= ' + str(paras[4]) \
+                                    + ', epochs= ' + str(epochs) \
+                                    + ', kernel_size= ' + str(paras[2]) \
+                                    + ', learning_rate= ' + str(paras[3])
         
         elif previous_paras[0:2] == paras[0:2] and \
                     previous_paras[3:] == paras[3:] and \
@@ -260,22 +278,50 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
         
         else:
             
-            legend_name = str(paras[0]) + ', [' + str(model_activations_str) \
-                                    + '], lr= ' + str(paras[3]) + ', bs= ' \
-                                    + str(paras[4])
+            randomnumber = random.randint(1, 10000)
+            randomnumbers.append(randomnumber)
+            parameters = str(paras[0]) + ',\n[' + str(model_activations_str) + '],' \
+                                    + '\nbatch_size= ' + str(paras[4]) \
+                                    + ', epochs= ' + str(epochs) \
+                                    + ', learning_rate= ' + str(paras[3])
+
             previous_paras = paras
             same_except_kernel += 1
             
         # store each models parameter string in a list for later use
-        parameters_str.append(legend_name)
-        ax.plot(loss_lists[index-1], label=legend_name, marker=next(marker), ms=5, 
-                                                                markevery=100)
+        parameters_str.append(parameters) 
+        ax.plot(loss_lists[index-1], label=('Model: ' + str(randomnumber) \
+                                                            + '-' + str(index)),
+                                                            marker=next(marker), ms=5, 
+                                                            markevery=100)
         ax.legend()
+        
+
+        # save loss figure for each model
+        with open(save_results_in + 'models.txt', 'a+'):
+            
+
+            file = open(save_results_in + 'models.txt',"r")
+  
+            readfile = file.read()
+
+            # do not plot model twice
+            if parameters not in readfile: 
+                
+                plt.figure()
+                plt.plot(loss_lists[index-1], label=('Model: ' + str(randomnumber) \
+                                                            + '-' + str(index)))    
+                subtitle = 'Training: ' + str(randomnumber) + '-' + str(index)
+                plt.title(subtitle)
+                plt.savefig(save_results_in + 'loss: ' + str(randomnumber) 
+                                            + '_' + str(index) + '.png')
 
 ax.title.set_text('Training')
 
 ax.set_xlabel('epochs')
 ax.set_ylabel('loss')
+
+plt.show()
 
 X_recon = []
 test_examples = None
@@ -291,33 +337,68 @@ with pt.no_grad():
             #break
 
 
-# Plot and compare the original signal with the reconstructed ones 
-fig, axes = plt.subplots(nrows=len(aemodels)+1, ncols=1, sharex='all')
 
-fig.tight_layout(h_pad=3)
+
 
 [rows, columns] = X_recon[0].shape
 with pt.no_grad():
     # first plot original function 
     for i in range(0, columns, plot_every):
-        axes[0].plot(x, X[:, i].real, color="k", alpha=1.0-0.01*i)
-        axes[0].title.set_text('Original time series data')
-    
+        plt.plot(x, X[:, i].real, color="k", alpha=1.0-0.01*i)
+        plt.title('Original time series data')
+        plt.savefig(save_results_in + 'original.png')
     # Plot each models output
-    for index, (ax, X_rec) in enumerate(zip(axes[1:], X_recon)):
+    for index, X_rec in enumerate(X_recon):
+        plt.show()
         for i in range(0, columns, plot_every):
-            ax.plot(x, X_rec[:, i], color="k", alpha=1.0-0.01*i)
-        
-        #subtitle = 'Model ' + str(index+1) + ': ' + parameters_str[index]
-        subtitle = parameters_str[index]             
-        ax.title.set_text(subtitle)
-        axes[index].set_xlim(-1.0, 1.0)
-          
-axes[len(axes)-1].set_xlabel(r"$x$")
+            plt.plot(x, X_rec[:, i], color="k", alpha=1.0-0.01*i)
+
+        subtitle = 'Model: ' + str(randomnumbers[index]) + '-' + str(index+1)
+        plt.title(subtitle)
+
+        with open(save_results_in + 'models.txt', 'a+'):
+            
+
+            file = open(save_results_in + 'models.txt',"r")
+  
+            readfile = file.read()
+
+            # do not plot model twice
+            if parameters_str[index] not in readfile: 
+                    
+                subtitle = 'Model: ' + str(randomnumbers[index]) + '-' + str(index+1)
+                plt.title(subtitle)
+                plt.savefig(save_results_in + str(randomnumbers[index]) 
+                                            + '_' + str(index+1) + '.png')
+
+            
+file.close()
+
 plt.show()
+
+for i, aemodel in enumerate(aemodels):
+    print('\n\nModel ' + str(randomnumbers[i]) + '-' + str(i+1) + ':\n\n', 
+            'User input:\n\n', 
+            parameters_str[i], '\n\n\n', aemodel,'\n') 
 
 #for name, param in aemodel.named_parameters():
 #    print(f"Layer: {name} | Size: {param.size()} | Values : {param[:2]} \n")
 
-for i, aemodel in enumerate(aemodels):
-    print('\n\nModel ' + str(i+1) + ':\n\n', aemodel)    
+
+with open(save_results_in + 'models.txt', 'a+'):
+    for i, aemodel in enumerate(aemodels):
+
+        file = open(save_results_in + 'models.txt',"r")
+  
+        readfile = file.read()
+
+        # do not print model twice
+        if parameters_str[i] not in readfile: 
+            
+            print('\n\nModel ' + str(randomnumbers[i]) + '-' + str(i+1) 
+            + ':\n\n', parameters_str[i], '\n\n\n', aemodel,'\n',
+            file = open(save_results_in + 'models.txt', 'a'))
+
+file.close()
+
+
