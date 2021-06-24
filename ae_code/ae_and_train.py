@@ -460,7 +460,8 @@ def build_model(X, architecture, activations, kernel_size=50):
         """
 
     #  use gpu if available
-    device = pt.device("cuda" if pt.cuda.is_available() else "cpu")
+    #device = pt.device("cuda" if pt.cuda.is_available() else "cpu")
+    device = pt.device("cpu")
 
     # get size of one single snapshot
     [rows, columns] = X.shape
