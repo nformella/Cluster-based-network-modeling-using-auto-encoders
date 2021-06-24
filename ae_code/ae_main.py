@@ -20,13 +20,14 @@ Variables to be defined by the user:
                         each convolutional layer. The final convolutional
                         layer is then automatically flattened and is followed
                         by fully connected layers including the latent 
-                        vector (the code). Another list can be added for
-                        transposed convolutional layers with the corresponding
-                        out_channels. A 0 is added to include a fully connected
-                        layer that is the same size as the first flattened
-                        vector. 
-                         The option exists to add fully connected layers at the 
-                        very end.
+                        vector (the code). To identify the code's position inside
+                        the architecture, the autoencoder searches for the 
+                        smallest number of neurons per layer.
+                        Another list can be included for transposed convolutional 
+                        layers with the corresponding out_channels. The number 0 
+                        indicatese a fully connected layer that is the same size 
+                        as the first flattened vector. 
+                         Fully connected layers can be added at the very end.
 
     activations:        Defines an activation function for each layer. 
                          If only fully connected layers are used, each list 
@@ -39,16 +40,26 @@ Variables to be defined by the user:
     
     batch_size:         batch size
 
+    code:               Latent vector length
+
     kernel_size:        kernel size
     
     learning_rate:      learning rate
     
     epochs:             epochs
+
+    time_mapping:       If True Y replaces X as the target output of the 
+                        autoencoder.
     
     print_reckonloss:   If True, numerical values for the reconstruction loss 
                         are printed
 
     save_results_in:    Ths specifies the relative path where results are saved. 
+
+    X:                  Input data matrix containing snapshots
+
+    Y:                  Output target matrix containing snapshots corresponding
+                        to X = X(t+dt).
 
 
 Example:
@@ -97,29 +108,32 @@ import random
 
 ##------------------------- USER DEFINED PARAMETERS ------------------------##
 
-save_results_in = "results/output/"     
+save_results_in = "results/deep_tplusdt_testing/"     
 
-code = 8
-kernel_size = [100]
+code = 1
+kernel_size = [10]
 
 ae_architecture = [
 #[[1, 6, 12], code, 0, [12, 6, 1], 1000],
-[[1, 6, 12], code, 0, [12,6,1]],
-[[1, 6, 12], code, 100],
-[100,code,100],
+#[[1, 6], code, 0, [6, 1]],
+#[[1, 6, 12], 100, code, 100],
+[400, 200, 120, 80, 40, code, 40, 80, 120, 200, 400],
+#[200, 40, code, 40, 200],
 ]
 activations = [
-#[pt.relu, pt.relu, pt.tanh, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
-[pt.relu, pt.relu, pt.tanh, pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
-[pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
-[pt.relu, pt.relu, pt.relu, pt.tanh],
+[pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
+[pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.selu],
+#[pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.selu],
+[pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.tanh],
+[pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.selu],
 ]
 batch_size = [10
 ]
-learning_rate = [1e-4]
+learning_rate = [1e-3]
 
 # global training settings
-epochs = 100
+epochs = 500
+time_mapping = True
 
 # Set figure options for plotting
 plot_every = 10
@@ -157,10 +171,13 @@ if not os.path.exists(save_results_in):
 x, t, X = create_test_data(*input_signal)
 
 # get size of a snapshot taken at any time t
+Y = X[:, 1:]
+X = X[:, 0:-1]
 [rows, columns] = X.shape
 datapnts_at_t = rows
 
 aemodels = [] 
+code = []
 loss_lists = []
 previous_paras = [0,0,0,0,0]
 same_except_kernel = 0
@@ -181,7 +198,7 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
             model, device = build_model(X, *paras[0:3]) 
             count_models += 1
             optimizer, criterion, train_loader = prep_training(X, model,
-                                                            *paras[3:])
+                                                            *paras[3:], Y)
         
         # avoid multiple instances of the same fully connected model if 
         # only the kernel size is varied
@@ -193,7 +210,7 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
         else:
             model, device = build_model(X, *paras[0:3])
             optimizer, criterion, train_loader = prep_training(X, model,
-                                                            *paras[3:])
+                                                            *paras[3:], Y)
             previous_paras = paras
             # same_except_kernel count in case the first two
             # fully connected layers are the same and previous_paras == 
@@ -202,10 +219,9 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
             count_models += 1
     
         # train autoencoder with data from X
-        train_dataset = X.real.T
-        loss_values = train_ae(model, epochs, train_loader, datapnts_at_t, 
-                                    optimizer, criterion, device,          
-                                                print_reconLoss)
+        loss_values, code = train_ae(model, epochs, train_loader, datapnts_at_t, 
+                                            optimizer, criterion, device, 
+                                            print_reconLoss, time_mapping)
 
         aemodels.append(copy.deepcopy(model)) 
         loss_lists.append((loss_values))
@@ -228,10 +244,11 @@ if count_models == 0:
                             hidden layers + output layer!")
 
 # Load test data. Currently set to train data
-test_dataset = train_dataset
-test_loader = pt.utils.data.DataLoader(
-test_dataset, batch_size=datapnts_at_t, shuffle=False
-)
+#train_dataset = X.real.T
+#test_dataset = train_dataset
+#test_loader = pt.utils.data.DataLoader(
+#test_dataset, batch_size=datapnts_at_t, shuffle=False
+#)
 
 marker = itertools.cycle((',', '+', '.', 'o', '*'))
 fig_loss = plt.figure()
@@ -266,10 +283,10 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
             randomnumber = random.randint(1, 10000)
             randomnumbers.append(randomnumber)
             parameters = str(paras[0]) + ',\n[' + str(model_activations_str) + '],'\
-                                    + '\nbatch_size= ' + str(paras[4]) \
-                                    + ', epochs= ' + str(epochs) \
-                                    + ', kernel_size= ' + str(paras[2]) \
-                                    + ', learning_rate= ' + str(paras[3])
+                                    + '\nbatch_size = ' + str(paras[4]) \
+                                    + ', epochs = ' + str(epochs) \
+                                    + ', kernel_size = ' + str(paras[2]) \
+                                    + ', learning_rate = ' + str(paras[3])
         
         elif previous_paras[0:2] == paras[0:2] and \
                     previous_paras[3:] == paras[3:] and \
@@ -281,16 +298,16 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
             randomnumber = random.randint(1, 10000)
             randomnumbers.append(randomnumber)
             parameters = str(paras[0]) + ',\n[' + str(model_activations_str) + '],' \
-                                    + '\nbatch_size= ' + str(paras[4]) \
-                                    + ', epochs= ' + str(epochs) \
-                                    + ', learning_rate= ' + str(paras[3])
+                                    + '\nbatch_size = ' + str(paras[4]) \
+                                    + ', epochs = ' + str(epochs) \
+                                    + ', learning_rate = ' + str(paras[3])
 
             previous_paras = paras
             same_except_kernel += 1
             
         # store each models parameter string in a list for later use
         parameters_str.append(parameters) 
-        ax.plot(loss_lists[index-1], label=('Model: ' + str(randomnumber) \
+        ax.semilogy(loss_lists[index-1], label=('Model: ' + str(randomnumber) \
                                                             + '-' + str(index)),
                                                             marker=next(marker), ms=5, 
                                                             markevery=100)
@@ -309,11 +326,13 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
             if parameters not in readfile: 
                 
                 plt.figure()
-                plt.plot(loss_lists[index-1], label=('Model: ' + str(randomnumber) \
+                plt.semilogy(loss_lists[index-1], label=('Model: ' + str(randomnumber) \
                                                             + '-' + str(index)))    
                 subtitle = 'Training: ' + str(randomnumber) + '-' + str(index)
                 plt.title(subtitle)
-                plt.savefig(save_results_in + 'loss: ' + str(randomnumber) 
+                plt.xlabel('epochs')
+                plt.ylabel('loss')
+                plt.savefig(save_results_in + 'loss_' + str(randomnumber) 
                                             + '_' + str(index) + '.png')
 
 ax.title.set_text('Training')
@@ -323,7 +342,15 @@ ax.set_ylabel('loss')
 
 plt.show()
 
+# Load test data. Currently set to train data
+train_dataset = X.real.T
+test_dataset = train_dataset
+test_loader = pt.utils.data.DataLoader(
+test_dataset, batch_size=datapnts_at_t, shuffle=False
+)
+
 X_recon = []
+codes = []
 test_examples = None
 
 with pt.no_grad():
@@ -331,30 +358,67 @@ with pt.no_grad():
         for batch_features in test_loader:
             #batch_features = batch_features[0]
             test_examples = batch_features.view(-1, datapnts_at_t)
-            X_recon_tensor = aemodel(test_examples)
+            X_recon_tensor, code_tensor = aemodel(test_examples)
             X_recon_tensor = X_recon_tensor.T
+            code_tensor = code_tensor.T
             X_recon.append(X_recon_tensor)
+            codes.append(code_tensor)
             #break
 
 
-
-
-
 [rows, columns] = X_recon[0].shape
+fig_orig, ax1 = plt.subplots()
+
+top = 1.1
+bottom = 0
+left = -1
+right = 1
 with pt.no_grad():
     # first plot original function 
     for i in range(0, columns, plot_every):
-        plt.plot(x, X[:, i].real, color="k", alpha=1.0-0.01*i)
+        ax1.plot(x, X[:, i].real, color="r", alpha=1.0-0.01*i)
         plt.title('Original time series data')
+        plt.xlabel('x')
+        bottom_new, top_new = plt.ylim()
+        left_new, right_new = plt.xlim()
+
+        plt.xlim(left,right)
+        if top_new > top:
+            top = top_new
+            plt.ylim(bottom, top)
+        elif bottom_new < bottom:
+            bottom = bottom_new
+            plt.ylim(bottom)
+        else:
+            plt.ylim(bottom, top)
+
         plt.savefig(save_results_in + 'original.png')
+    
+    plt.show() # comment out to show original data and model in same figure
+    
     # Plot each models output
     for index, X_rec in enumerate(X_recon):
-        plt.show()
+        
         for i in range(0, columns, plot_every):
             plt.plot(x, X_rec[:, i], color="k", alpha=1.0-0.01*i)
+        
+        #plt.show()    
+        plt.xlabel('x')
+        plt.xlim(left,right)
+        bottom_new, top_new = plt.ylim()
+        if top_new > top:
+            top = top_new
+            plt.ylim(bottom, top)
+        elif bottom_new < bottom:
+            bottom = bottom_new
+            plt.ylim(bottom, top)
+        else:
+            plt.ylim(bottom, top)
+
 
         subtitle = 'Model: ' + str(randomnumbers[index]) + '-' + str(index+1)
         plt.title(subtitle)
+        
 
         with open(save_results_in + 'models.txt', 'a+'):
             
@@ -369,21 +433,56 @@ with pt.no_grad():
                 subtitle = 'Model: ' + str(randomnumbers[index]) + '-' + str(index+1)
                 plt.title(subtitle)
                 plt.savefig(save_results_in + str(randomnumbers[index]) 
-                                            + '_' + str(index+1) + '.png')
+                                            + '_' + str(index+1) + '.png')  
+        
+        plt.show()
+        file.close()
 
+
+#plt.show()
+plt.close()
+
+
+axes = []
+
+#test section for code
+[rows, columns] = codes[0].shape
+x1 = list(range(1, columns+1))
+with pt.no_grad():
+    # Plot each models latent features
+    for index, code in enumerate(codes):
+        #plt.close()
+        ax2 = plt.subplot(111)
+        axes.append(ax2)
+        for j in range(0, rows):
+            axes[index].plot(x1, code[j], color="k", label='neuron '
+                                 + str(j+1), marker=next(marker))
+
+        axes[index].set_title('Latent features: Model ' 
+                + str(randomnumbers[index]) + '-' + str(index+1))  
+        axes[index].legend()
+
+        with open(save_results_in + 'models.txt', 'a+'):
             
-file.close()
 
-plt.show()
+            file = open(save_results_in + 'models.txt',"r")
+  
+            readfile = file.read()
 
-for i, aemodel in enumerate(aemodels):
-    print('\n\nModel ' + str(randomnumbers[i]) + '-' + str(i+1) + ':\n\n', 
-            'User input:\n\n', 
-            parameters_str[i], '\n\n\n', aemodel,'\n') 
+            # do not plot model twice
+            if parameters_str[index] not in readfile: 
+                    
+                subtitle = 'Latent features: Model ' + str(randomnumbers[index]) \
+                                                    + '-' + str(index+1)
+                plt.title(subtitle)
+                plt.savefig(save_results_in + 'code_' + str(randomnumbers[index]) 
+                                            + '_' + str(index+1) + '.png')  
+        
+        plt.show()
+        file.close()
 
-#for name, param in aemodel.named_parameters():
-#    print(f"Layer: {name} | Size: {param.size()} | Values : {param[:2]} \n")
 
+plt.close()
 
 with open(save_results_in + 'models.txt', 'a+'):
     for i, aemodel in enumerate(aemodels):
@@ -402,3 +501,14 @@ with open(save_results_in + 'models.txt', 'a+'):
 file.close()
 
 
+for i, aemodel in enumerate(aemodels):
+    print('\n\nModel ' + str(randomnumbers[i]) + '-' + str(i+1) + ':\n\n', 
+            'User input:\n\n', 
+            parameters_str[i], '\n\n\n', aemodel,'\n') 
+
+#for name, param in aemodel.named_parameters():
+#    print(f"Layer: {name} | Size: {param.size()} | Values : {param[:2]} \n")
+
+
+
+                    

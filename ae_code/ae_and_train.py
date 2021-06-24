@@ -233,7 +233,10 @@ class AE(nn.Module):
             in_neurons = conv_out_channels * lout
 
 
-        # build fully connected blocks
+        # build fully connected blocks and find the index of the latent vector
+        # (smallest number of neurons)
+        fewest_neurons_per_layer = in_neurons
+        self.fewest_neurons_per_layer_idx = unnested_idx
         previous = in_neurons
         for i in range(list_idx, len(self.layers)):
 
@@ -246,20 +249,34 @@ class AE(nn.Module):
                 self.blocks.append(LinearBlock(previous, in_neurons, 
                                             activations[unnested_idx]))
                 
+                
                 unnested_idx += 1
                 list_idx += 1
-                
+
+                # update code index
+                if self.layers[i] <= previous and self.layers[i] != 0:
+                    fewest_neurons_per_layer = self.layers[i]
+                    self.fewest_neurons_per_layer_idx = unnested_idx-1
+                    
+
                 if i+1 == len(self.layers):
                     return
                 
                 break
 
-
+            
             self.blocks.append(LinearBlock(previous, 
                                         self.layers[i], 
                                         activations[unnested_idx]))
             unnested_idx += 1
             list_idx += 1
+
+            # update code index
+            if self.layers[i] <= previous and self.layers[i] != 0:
+                fewest_neurons_per_layer = self.layers[i]
+                self.fewest_neurons_per_layer_idx = unnested_idx-1
+
+
             previous = self.layers[i]
 
         self.into_convt_idx = unnested_idx      
@@ -321,7 +338,7 @@ class AE(nn.Module):
         
         for i, block in enumerate(self.blocks):
             
-
+           
             if i == 0 and type(self.layers[0]) == list and len(x.shape) == 2:
                 x = x.reshape(-1, self.layers[0][0], self.layers[-1])
 
@@ -334,12 +351,15 @@ class AE(nn.Module):
             if i == self.into_final_fc_idx and self.into_final_fc_idx != 0:
                 x = self.flatten2(x)
 
+            if i == self.fewest_neurons_per_layer_idx:
+                code = block(x)
+            
             x = block(x)   
 
             if i == len(self.blocks)-1 and len(x.shape) == 3:
                 x = self.flatten2(x) 
 
-        return x
+        return x, code
 
 
     def num_flat_features_conv(self, input_shape, kernel_size, stride=1, pad=0, 
@@ -454,7 +474,7 @@ def build_model(X, architecture, activations, kernel_size=50):
     return model, device
 
 
-def prep_training(X, model, learning_rate, batch_size=1):
+def prep_training(X, model, learning_rate, batch_size=1, targets=None):
     """
     Prepares the training process by creating an optimizer object, 
     defining the training loss and loading the training data.
@@ -471,6 +491,10 @@ def prep_training(X, model, learning_rate, batch_size=1):
             X: tensor
                 Data matrix containing the snapshots [input_features, 
                                                     number of snapshots] 
+            targets: tensor, optional
+                Data matrix containing the snapshots at time t + dt
+                [input_features, number of snapshots]. Default: 0 (no 
+                time mapping)
 
         Returns
         ----------
@@ -490,16 +514,22 @@ def prep_training(X, model, learning_rate, batch_size=1):
     criterion = nn.MSELoss()
 
     # load train data
-    train_dataset = X.real.T
+    if targets != None:
+        train_dataset = []
+        for i in range(len(X.real.T)):
+            train_dataset.append([X.real.T[i], targets.real.T[i]])
+    else:
+        train_dataset = X.real.T
+    
     train_loader = pt.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=False
-    )
+                train_dataset, batch_size=batch_size, shuffle=False)
 
     return optimizer, criterion, train_loader
 
 
 def train_ae(model, epochs, train_loader, input_shape, optimizer, 
-                                criterion, device, print_reconLoss):
+                                criterion, device, print_reconLoss=True,
+                                                    time_mapping=True):
     """
     Trains the autoencoder for a specified number of epochs. Therefore, 
     mini-batch data is loaded to the active device, a reconstruction is
@@ -523,6 +553,9 @@ def train_ae(model, epochs, train_loader, input_shape, optimizer,
             optimizer: optimizer
                 perform parameter update based on current gradients
             print_reconloss: Boolean
+                If true the training loss per epoch is printed in real time.
+                Default: True
+            time_mapping: Boolean
                 If true the training loss per epoch is printed in real time
 
         Returns
@@ -538,17 +571,21 @@ def train_ae(model, epochs, train_loader, input_shape, optimizer,
         for batch_features in train_loader:
             # Reshape mini-batch data to [N, input_shape] matrix and load 
             # it to the active device
-            batch_features = batch_features.view(-1, input_shape).to(device)
+            if time_mapping == True:
+                inputs, targets = batch_features
+                inputs = inputs.view(-1, input_shape).to(device)
+            else:
+                inputs = batch_features.view(-1, input_shape).to(device)
 
             # Reset the gradients back to zero
             # PyTorch accumulates gradients on subsequent backward passes 
             optimizer.zero_grad()
             
             # compute reconstructions
-            outputs = model(batch_features)
+            outputs, code = model(inputs)
             
             # compute training reconstruction loss
-            train_loss = criterion(outputs, batch_features)
+            train_loss = criterion(outputs, targets)
             
             # compute accumulated gradients
             train_loss.backward()
@@ -569,5 +606,5 @@ def train_ae(model, epochs, train_loader, input_shape, optimizer,
 
         loss_values.append(loss)
     
-    return loss_values
+    return loss_values, code
 
