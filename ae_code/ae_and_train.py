@@ -22,6 +22,7 @@ from helper_functions import num_elements
 import torch.nn as nn
 import torch as pt
 import torch.optim as optim
+import torchvision      # for testing
 
 
 class ConvBlock(nn.Module):
@@ -467,6 +468,9 @@ def build_model(X, architecture, activations, kernel_size=50):
     [rows, columns] = X.shape
     datapnts_at_t = rows
 
+    # MNIST testing
+    #datapnts_at_t = 784  # MNIST test
+
     # create a model from `AE` autoencoder class
     # load it to the specified device, either gpu or cpu
     model = AE(datapnts_at_t, architecture, activations, kernel_size) \
@@ -494,7 +498,7 @@ def prep_training(X, model, learning_rate, batch_size=1, targets=None):
                                                     number of snapshots] 
             targets: tensor, optional
                 Data matrix containing the snapshots at time t + dt
-                [input_features, number of snapshots]. Default: 0 (no 
+                [input_features, number of snapshots]. Default: None (no 
                 time mapping)
 
         Returns
@@ -522,6 +526,14 @@ def prep_training(X, model, learning_rate, batch_size=1, targets=None):
     else:
         train_dataset = X.real.T
     
+    # -----------------testing with MNIST--------------
+    #transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
+
+    #train_dataset = torchvision.datasets.MNIST(
+    #        root="~/torch_datasets", train=True, transform=transform, download=True
+    #        )
+    # -------------------------------------------------
+
     train_loader = pt.utils.data.DataLoader(
                 train_dataset, batch_size=batch_size, shuffle=False)
 
@@ -530,7 +542,7 @@ def prep_training(X, model, learning_rate, batch_size=1, targets=None):
 
 def train_ae(model, epochs, train_loader, input_shape, optimizer, 
                                 criterion, device, print_reconLoss=True,
-                                                    time_mapping=True):
+                                                    time_mapping=False):
     """
     Trains the autoencoder for a specified number of epochs. Therefore, 
     mini-batch data is loaded to the active device, a reconstruction is
@@ -557,7 +569,7 @@ def train_ae(model, epochs, train_loader, input_shape, optimizer,
                 If true the training loss per epoch is printed in real time.
                 Default: True
             time_mapping: Boolean
-                If true the training loss per epoch is printed in real time
+                If true, time mapping is enabled. Default: False
 
         Returns
         ----------
@@ -568,6 +580,9 @@ def train_ae(model, epochs, train_loader, input_shape, optimizer,
 
     loss_values = []
     for epoch in range(epochs):
+        # MNIST testing
+        #input_shape = 784           
+
         loss = 0
         for batch_features in train_loader:
             # Reshape mini-batch data to [N, input_shape] matrix and load 
@@ -577,6 +592,7 @@ def train_ae(model, epochs, train_loader, input_shape, optimizer,
                 inputs = inputs.view(-1, input_shape).to(device)
             else:
                 inputs = batch_features.view(-1, input_shape).to(device)
+                targets = batch_features.view(-1, input_shape).to(device)
 
             # Reset the gradients back to zero
             # PyTorch accumulates gradients on subsequent backward passes 

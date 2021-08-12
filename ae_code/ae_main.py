@@ -104,36 +104,43 @@ from test_data import create_test_data
 import copy
 import itertools
 import random
+import torchvision # MNIST testing
 
 
 ##------------------------- USER DEFINED PARAMETERS ------------------------##
 
-save_results_in = "results/deep_tplusdt_testing/"     
+save_results_in = "results/conv_tplusdt_testing/"     
 
-code = 1
-kernel_size = [10]
+code = 2
+kernel_size = [10,
+]
 
 ae_architecture = [
 #[[1, 6, 12], code, 0, [12, 6, 1], 1000],
-#[[1, 6], code, 0, [6, 1]],
+[[1, 6], 10, code, 10, 0, [6, 1]],
 #[[1, 6, 12], 100, code, 100],
-[400, 200, 120, 80, 40, code, 40, 80, 120, 200, 400],
-#[200, 40, code, 40, 200],
+#[400, 200, 120, 80, 40, code, 40, 80, 120, 200, 400],
+[200, 40, code, 40, 200],
+[128, 128, code, 128]
 ]
+
 activations = [
 [pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
 [pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.selu],
-#[pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.selu],
-[pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.tanh],
+[pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
+#[pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.tanh],
 [pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.selu],
 ]
-batch_size = [10
+
+batch_size = [512,
 ]
-learning_rate = [1e-3]
+
+learning_rate = [1e-3,
+]
 
 # global training settings
-epochs = 500
-time_mapping = True
+epochs = 10000
+time_mapping = False
 
 # Set figure options for plotting
 plot_every = 10
@@ -151,6 +158,8 @@ def test_signal(x: pt.Tensor, t: float, z: complex) -> pt.Tensor:
     #return 2.0 * pt.tanh(5.0*x) / pt.cosh(5.0*x) * pt.exp(z*t)
 
 input_signal = [[test_signal], [1.0j], [1.0]]
+
+
 
 # Options related to reproducibility '''
 seed = 42
@@ -172,9 +181,16 @@ x, t, X = create_test_data(*input_signal)
 
 # get size of a snapshot taken at any time t
 Y = X[:, 1:]
+
+if time_mapping == False:
+    Y = None
+
 X = X[:, 0:-1]
 [rows, columns] = X.shape
 datapnts_at_t = rows
+
+# MNIST testing
+#datapnts_at_t = 784
 
 aemodels = [] 
 code = []
@@ -243,12 +259,7 @@ if count_models == 0:
             raise ValueError("Number of activations must equal number of \
                             hidden layers + output layer!")
 
-# Load test data. Currently set to train data
-#train_dataset = X.real.T
-#test_dataset = train_dataset
-#test_loader = pt.utils.data.DataLoader(
-#test_dataset, batch_size=datapnts_at_t, shuffle=False
-#)
+
 
 marker = itertools.cycle((',', '+', '.', 'o', '*'))
 fig_loss = plt.figure()
@@ -349,6 +360,18 @@ test_loader = pt.utils.data.DataLoader(
 test_dataset, batch_size=datapnts_at_t, shuffle=False
 )
 
+## MNIST testing ------------
+#transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
+
+#test_dataset = torchvision.datasets.MNIST(
+#    root="~/torch_datasets", train=False, transform=transform, download=True
+#)
+## ----------------
+
+test_loader = pt.utils.data.DataLoader(
+    test_dataset, batch_size=datapnts_at_t, shuffle=False
+)
+
 X_recon = []
 codes = []
 test_examples = None
@@ -356,14 +379,41 @@ test_examples = None
 with pt.no_grad():
     for aemodel in aemodels:
         for batch_features in test_loader:
-            #batch_features = batch_features[0]
+            #batch_features = batch_features[0] # MNIST test
             test_examples = batch_features.view(-1, datapnts_at_t)
             X_recon_tensor, code_tensor = aemodel(test_examples)
-            X_recon_tensor = X_recon_tensor.T
+            X_recon_tensor = X_recon_tensor.T  # MNIST test
             code_tensor = code_tensor.T
             X_recon.append(X_recon_tensor)
             codes.append(code_tensor)
-            #break
+            break
+
+
+## MNIST testing--------------------
+#with pt.no_grad():
+#    for aemodel in aemodels:
+
+#        number = 10
+#        plt.figure(figsize=(20, 4))
+
+ #       for index in range(number):
+ #           # display original
+ #           ax = plt.subplot(2, number, index + 1)
+ #           plt.imshow(test_examples[index].numpy().reshape(28, 28))
+ #           plt.gray()
+ #           ax.get_xaxis().set_visible(False)
+ #           ax.get_yaxis().set_visible(False)
+
+            # display reconstruction
+#            ax = plt.subplot(2, number, index + 1 + number)
+#            plt.imshow(X_recon[0][index].numpy().reshape(28, 28))
+#            plt.gray()
+#            ax.get_xaxis().set_visible(False)
+#            ax.get_yaxis().set_visible(False)
+#        plt.show()
+
+# -----------------------------------
+
 
 
 [rows, columns] = X_recon[0].shape
@@ -376,7 +426,7 @@ right = 1
 with pt.no_grad():
     # first plot original function 
     for i in range(0, columns, plot_every):
-        ax1.plot(x, X[:, i].real, color="r", alpha=1.0-0.01*i)
+        ax1.plot(x, X[:, i].real, color="b", alpha=1.0-0.01*i)
         plt.title('Original time series data')
         plt.xlabel('x')
         bottom_new, top_new = plt.ylim()
@@ -401,8 +451,7 @@ with pt.no_grad():
         
         for i in range(0, columns, plot_every):
             plt.plot(x, X_rec[:, i], color="k", alpha=1.0-0.01*i)
-        
-        #plt.show()    
+           
         plt.xlabel('x')
         plt.xlim(left,right)
         bottom_new, top_new = plt.ylim()
@@ -438,20 +487,17 @@ with pt.no_grad():
         plt.show()
         file.close()
 
-
-#plt.show()
 plt.close()
 
 
 axes = []
 
-#test section for code
+#test section for code visualization
 [rows, columns] = codes[0].shape
 x1 = list(range(1, columns+1))
 with pt.no_grad():
     # Plot each models latent features
     for index, code in enumerate(codes):
-        #plt.close()
         ax2 = plt.subplot(111)
         axes.append(ax2)
         for j in range(0, rows):
@@ -482,8 +528,6 @@ with pt.no_grad():
         file.close()
 
 
-plt.close()
-
 with open(save_results_in + 'models.txt', 'a+'):
     for i, aemodel in enumerate(aemodels):
 
@@ -508,7 +552,3 @@ for i, aemodel in enumerate(aemodels):
 
 #for name, param in aemodel.named_parameters():
 #    print(f"Layer: {name} | Size: {param.size()} | Values : {param[:2]} \n")
-
-
-
-                    
