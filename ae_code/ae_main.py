@@ -37,7 +37,7 @@ Variables to be defined by the user:
                         the number of activation functions must equal
                         the number of all filters plus the fully connected
                         elements. 
-    
+
     batch_size:         batch size
 
     code:               Latent vector length
@@ -94,62 +94,32 @@ Example:
 '''
 
 import os
+
+from flowtorch import data
+from matplotlib.animation import FuncAnimation
 from helper_functions import num_elements
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-import torch as pt
+mpl.use("Agg")
+import torch as pt 
 import math
 from ae_and_train import build_model, prep_training, train_ae
-from test_data import create_test_data
+import load_data
 import copy
 import itertools
 import random
-import torchvision # MNIST testing
+from flowtorch.data import FOAMDataloader, mask_box
+#import torchvision # MNIST testing
 
 
-##------------------------- USER DEFINED PARAMETERS ------------------------##
+##------------------------ Input data -------------------------------------##
 
-save_results_in = "results/conv_tplusdt_testing/"     
+data_type = "openFoam" #"1d_function"  # "openFoam"
 
-code = 2
-kernel_size = [10,
-]
-
-ae_architecture = [
-#[[1, 6, 12], code, 0, [12, 6, 1], 1000],
-[[1, 6], 10, code, 10, 0, [6, 1]],
-#[[1, 6, 12], 100, code, 100],
-#[400, 200, 120, 80, 40, code, 40, 80, 120, 200, 400],
-[200, 40, code, 40, 200],
-[128, 128, code, 128]
-]
-
-activations = [
-[pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
-[pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.selu],
-[pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
-#[pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.tanh],
-[pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.selu],
-]
-
-batch_size = [512,
-]
-
-learning_rate = [1e-3,
-]
-
-# global training settings
-epochs = 10000
-time_mapping = False
-
-# Set figure options for plotting
-plot_every = 10
-mpl.rcParams['figure.dpi'] = 160
-mpl.rcParams['figure.figsize'] = (8, 4)
-mpl.rcParams['axes.labelsize'] = "large"
-
-# prints the reconstruction_loss if True
-print_reconLoss = True
+# path to simulation data
+path = "/mnt/d/Studium/Studienarbeit/Daten/datasets/of_cylinder2D_binary"             
+#path = "/mnt/d/Studium/Studienarbeit/Daten/cylinder2D_base_100_100"
+#path = "../cylinder2D_base_100_100/"
 
 # define test function for input
 def test_signal(x: pt.Tensor, t: float, z: complex) -> pt.Tensor:
@@ -160,6 +130,57 @@ def test_signal(x: pt.Tensor, t: float, z: complex) -> pt.Tensor:
 input_signal = [[test_signal], [1.0j], [1.0]]
 
 
+##------------------------- USER DEFINED PARAMETERS ------------------------##
+
+save_results_in = "results/testing/"     
+
+# autoencoder finds a representation for snapshots > t_start seconds
+t_start = 4.0
+
+code = 2
+kernel_size = [10,
+]
+
+ae_architecture = [
+#[[1, 6, 12], code, 0, [12, 6, 1], 1000],
+#[[1, 6], 10, code, 10, 0, [6, 1]],
+#[[1, 6, 12], 100, code, 100],
+#[400, 200, 120, 80, 40, code, 40, 80, 120, 200, 400],
+[200, 40, code, 40, 200],
+[128, 128, code, 128]
+]
+
+activations = [
+[pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
+[pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.selu],
+[pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
+#[pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.selu],
+[pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.selu],
+]
+
+batch_size = [512,
+]
+
+learning_rate = [1e-4,
+]
+
+# global training settings
+epochs = 1000
+time_mapping = False
+
+# Set figure options for plotting
+plot_every_vertex = 2
+plot_every_snapshot = 1
+mpl.rcParams['figure.dpi'] = 160
+mpl.rcParams['figure.figsize'] = (8, 4)
+mpl.rcParams['axes.labelsize'] = "large"
+
+# prints the reconstruction loss if True
+print_reconLoss = True
+# animate the flow
+animation = True
+# print these reconstructed snapshots
+snapshots = (0,-1)
 
 # Options related to reproducibility '''
 seed = 42
@@ -170,14 +191,17 @@ pt.backends.cudnn.deterministic = True
 
 ##---------------------------------- END -----------------------------------##
 
-
 # creates folder to store files
 if not os.path.exists(save_results_in):
     os.makedirs(save_results_in)
 
-# Get matrix X that contains snapshots of the input signal at different
-# time steps 
-x, t, X = create_test_data(*input_signal)
+X = None
+if data_type == "1d_function":
+  # Get matrix X that contains snapshots of the input signal at different
+  # time steps 
+  x, t, X = load_data.create_1d_funct_data(*input_signal)
+elif data_type == "openFoam":
+  x, y, X = load_data.load_openfoam_data(path, t_start, plot_every_vertex)
 
 # get size of a snapshot taken at any time t
 Y = X[:, 1:]
@@ -214,7 +238,8 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
             model, device = build_model(X, *paras[0:3]) 
             count_models += 1
             optimizer, criterion, train_loader = prep_training(X, model,
-                                                            *paras[3:], Y)
+                                                            *paras[3:], 
+                                                            data_type, Y)
         
         # avoid multiple instances of the same fully connected model if 
         # only the kernel size is varied
@@ -226,7 +251,9 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
         else:
             model, device = build_model(X, *paras[0:3])
             optimizer, criterion, train_loader = prep_training(X, model,
-                                                            *paras[3:], Y)
+                                                            *paras[3:], 
+                                                            data_type,
+                                                            Y)
             previous_paras = paras
             # same_except_kernel count in case the first two
             # fully connected layers are the same and previous_paras == 
@@ -258,7 +285,6 @@ if count_models == 0:
         else:
             raise ValueError("Number of activations must equal number of \
                             hidden layers + output layer!")
-
 
 
 marker = itertools.cycle((',', '+', '.', 'o', '*'))
@@ -318,12 +344,11 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
             
         # store each models parameter string in a list for later use
         parameters_str.append(parameters) 
-        ax.semilogy(loss_lists[index-1], label=('Model: ' + str(randomnumber) \
-                                                            + '-' + str(index)),
-                                                            marker=next(marker), ms=5, 
-                                                            markevery=100)
+        ax.semilogy(loss_lists[index-1], label=('Model: ' + str(randomnumber) 
+                                                        + '-' + str(index)),
+                                                        marker=next(marker), 
+                                                        ms=5, markevery=100)
         ax.legend()
-        
 
         # save loss figure for each model
         with open(save_results_in + 'models.txt', 'a+'):
@@ -337,14 +362,16 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
             if parameters not in readfile: 
                 
                 plt.figure()
-                plt.semilogy(loss_lists[index-1], label=('Model: ' + str(randomnumber) \
+                plt.semilogy(loss_lists[index-1], label=('Model: ' 
+                                                            + str(randomnumber)
                                                             + '-' + str(index)))    
+                
                 subtitle = 'Training: ' + str(randomnumber) + '-' + str(index)
                 plt.title(subtitle)
                 plt.xlabel('epochs')
                 plt.ylabel('loss')
                 plt.savefig(save_results_in + 'loss_' + str(randomnumber) 
-                                            + '_' + str(index) + '.png')
+                                            + '_' + str(index) + '.pdf')
 
 ax.title.set_text('Training')
 
@@ -352,9 +379,16 @@ ax.set_xlabel('epochs')
 ax.set_ylabel('loss')
 
 plt.show()
+plt.clf()
+
 
 # Load test data. Currently set to train data
-train_dataset = X.real.T
+train_dataset = None
+if data_type == "1d_function":
+    train_dataset = X.real.T
+elif data_type == "openFoam":
+    train_dataset = X.T
+    
 test_dataset = train_dataset
 test_loader = pt.utils.data.DataLoader(
 test_dataset, batch_size=datapnts_at_t, shuffle=False
@@ -414,85 +448,221 @@ with pt.no_grad():
 
 # -----------------------------------
 
-
-
 [rows, columns] = X_recon[0].shape
 fig_orig, ax1 = plt.subplots()
 
-top = 1.1
-bottom = 0
+def animate_orig(i):
+
+    plt.cla()
+    ax_anim = plt.gca()
+    ax_anim.tricontourf(x[::plot_every_vertex], y[::plot_every_vertex], 
+                                                X[::plot_every_vertex, i])
+    circ = plt.Circle((0.2, 0.2), 0.05, color='dimgrey')
+    ax_anim.add_patch(circ)
+    ax_anim.set_aspect("equal", 'box')
+    plt.title('Original flow')
+
+def animate_recon(i, subtitle):
+
+    plt.cla()
+    ax_anim = plt.gca()
+    ax_anim.tricontourf(x[::plot_every_vertex], y[::plot_every_vertex], 
+                                            X_rec[::plot_every_vertex, i])
+    circ = plt.Circle((0.2, 0.2), 0.05, color='dimgrey')
+    ax_anim.add_patch(circ)
+    ax_anim.set_aspect("equal", 'box')
+    plt.title(subtitle)
+
+# Set up formatting for movie files
+Writer = mpl.animation.writers['ffmpeg']
+writer = Writer(fps=15, metadata=dict(artist='nformella'), bitrate=7200)
+
+# set axis limits
+upper = 1.1
+lower = 0
 left = -1
 right = 1
 with pt.no_grad():
-    # first plot original function 
-    for i in range(0, columns, plot_every):
-        ax1.plot(x, X[:, i].real, color="b", alpha=1.0-0.01*i)
-        plt.title('Original time series data')
-        plt.xlabel('x')
-        bottom_new, top_new = plt.ylim()
-        left_new, right_new = plt.xlim()
+    # first plot original data
+    if data_type == "1d_function":
+        for i in range(0, columns, plot_every_snapshot):
+            ax1.plot(x, X[:, i].real, color="b", alpha=1.0-0.01*i)
+            plt.title('Original time series data')
+            plt.xlabel('x')
+            bottom_new, top_new = plt.ylim()
+            left_new, right_new = plt.xlim()
 
-        plt.xlim(left,right)
-        if top_new > top:
-            top = top_new
-            plt.ylim(bottom, top)
-        elif bottom_new < bottom:
-            bottom = bottom_new
-            plt.ylim(bottom)
-        else:
-            plt.ylim(bottom, top)
+            plt.xlim(left,right)
+            if top_new > upper:
+                upper = top_new
+                plt.ylim(top=upper)
+            elif bottom_new < lower:
+                lower = bottom_new
+                plt.ylim(bottom=lower)
+            else:
+                plt.ylim(lower, upper)
 
-        plt.savefig(save_results_in + 'original.png')
+            plt.savefig(save_results_in + 'original.pdf')
+
+        # comment out to show original data and reconstruction in same 
+        # fig
+        plt.show()
+        plt.clf()
+
+    elif data_type == "openFoam":
+        
+        ax1.tricontourf(x[::plot_every_vertex], y[::plot_every_vertex], 
+                                            X[::plot_every_vertex, -1])
+        cc = plt.Circle((0.2, 0.2), 0.05, color='dimgrey')
+        ax1.add_artist(cc)
+        ax1.set_aspect("equal", 'box')
+        plt.title('Original snapshot')
+        
+        
+        plt.savefig(save_results_in + 'original.pdf')
+        plt.show()
+
+        if animation == True:
+
+            anim_orig = FuncAnimation(plt.gcf(), animate_orig, 
+                                        frames=range(0, columns, 
+                                            plot_every_snapshot), 
+                                                interval=200000) 
+            anim_orig.save(save_results_in + 'orig.mp4', writer=writer)
+            plt.draw()
+            plt.show()
+            plt.clf()
+                                                                            
     
-    plt.show() # comment out to show original data and model in same figure
-    
-    # Plot each models output
+    anim_recon = None
+    # Plot each model's output
     for index, X_rec in enumerate(X_recon):
         
-        for i in range(0, columns, plot_every):
-            plt.plot(x, X_rec[:, i], color="k", alpha=1.0-0.01*i)
-           
-        plt.xlabel('x')
-        plt.xlim(left,right)
-        bottom_new, top_new = plt.ylim()
-        if top_new > top:
-            top = top_new
-            plt.ylim(bottom, top)
-        elif bottom_new < bottom:
-            bottom = bottom_new
-            plt.ylim(bottom, top)
-        else:
-            plt.ylim(bottom, top)
+        if data_type == "1d_function":
+            for i in range(0, columns, plot_every_snapshot):
+               plt.plot(x, X_rec[:, i], color="k", alpha=1.0-0.01*i)
+
+            plt.xlabel('x')
+            plt.xlim(left,right)
+            bottom_new, top_new = plt.ylim()
+            if top_new > upper:
+                upper = top_new
+                plt.ylim(top=upper)
+            elif bottom_new < lower:
+                lower = bottom_new
+                plt.ylim(bottom=lower)
+            else:
+                plt.ylim(lower, upper)
 
 
-        subtitle = 'Model: ' + str(randomnumbers[index]) + '-' + str(index+1)
-        plt.title(subtitle)
-        
+            subtitle = 'Model: ' + str(randomnumbers[index]) + '-' \
+                                                        + str(index+1)
+            plt.title(subtitle)
 
-        with open(save_results_in + 'models.txt', 'a+'):
+            with open(save_results_in + 'models.txt', 'a+'):
             
 
-            file = open(save_results_in + 'models.txt',"r")
+                file = open(save_results_in + 'models.txt',"r")
+    
+                readfile = file.read()
+
+                # do not plot model twice
+                if parameters_str[index] not in readfile: 
+
+                    subtitle = 'Model: ' + str(randomnumbers[index]) \
+                                                    + '-' + str(index+1)
+                    plt.title(subtitle)
+                    plt.savefig(save_results_in + str(randomnumbers[index]) 
+                                                    + '_' + str(index+1) 
+                                                          + '_recon.pdf')  
+                                                                                    
+            plt.show()
+            file.close()
+
+        elif data_type == "openFoam":
   
-            readfile = file.read()
+            subtitle = 'Model: ' + str(randomnumbers[index]) + '-' \
+                                                            + str(index+1)
 
-            # do not plot model twice
-            if parameters_str[index] not in readfile: 
+            if animation == True:
+                anim_recon = FuncAnimation(plt.gcf(), animate_recon, 
+                                            frames=range(0, columns, 
+                                                        plot_every_snapshot), 
+                                                            interval=200000,
+                                                            fargs=(subtitle,))
+                                                                                       
+                plt.draw()
+                plt.show() 
+                plt.clf()
+
+            ax_arr = []
+            for idx, snapshot in enumerate(snapshots):
+                
+                if snapshot < columns:
+                                            
+                    if snapshot == -1:
+                        snapshot = columns - 1
+
+                    subtitle_snap = 'Model: ' + str(randomnumbers[index]) \
+                                                        + '-' + str(index+1) \
+                                                        + ' (snapshot '  \
+                                                        + str(snapshot) + ')'
                     
-                subtitle = 'Model: ' + str(randomnumbers[index]) + '-' + str(index+1)
-                plt.title(subtitle)
-                plt.savefig(save_results_in + str(randomnumbers[index]) 
-                                            + '_' + str(index+1) + '.png')  
+                    ax = plt.subplot(111)
+                    ax_arr.append(ax)
+                    ax_arr[idx].tricontourf(x[::plot_every_vertex], 
+                                                y[::plot_every_vertex], 
+                                                X_rec[::plot_every_vertex, 
+                                                                snapshot])   
+                    
+                    ax_arr[idx].set_title(subtitle_snap)
+                    plt.draw()
+                    plt.show()  
+
+                else:
+
+                    raise ValueError("Snapshot " + str(snapshot) 
+                                                        + " out of range")     
         
-        plt.show()
-        file.close()
+            with open(save_results_in + 'models.txt', 'a+'):
 
-plt.close()
+                file = open(save_results_in + 'models.txt',"r")
+    
+                readfile = file.read()
 
+                # do not plot model twice
+                if parameters_str[index] not in readfile: 
+
+                    for idx, snapshot in enumerate(snapshots):
+                        if snapshot < columns:
+
+                            if snapshot == -1:
+                                snapshot = columns - 1
+
+                            subtitle_snap = 'Model: ' + str(randomnumbers[index]) \
+                                                        + '-' + str(index+1) \
+                                                        + ' (snapshot '  \
+                                                        + str(snapshot) + ')'
+
+                            ax_arr[idx].set_title(subtitle_snap)
+
+                            ax_arr[idx].get_figure().savefig(save_results_in
+                                                    + str(randomnumbers[index]) 
+                                                    + '_' + str(index+1) 
+                                                    + '_snapshot_' + str(snapshot)
+                                                    + '.pdf') 
+                    
+                    anim_recon.save(save_results_in + str(randomnumbers[index]) 
+                                             + '_' + str(index+1) + '_recon.mp4', 
+                                                                    writer=writer)
+                        
+            file.close()
+
+plt.clf()
 
 axes = []
 
-#test section for code visualization
+# code visualization
 [rows, columns] = codes[0].shape
 x1 = list(range(1, columns+1))
 with pt.no_grad():
@@ -522,17 +692,14 @@ with pt.no_grad():
                                                     + '-' + str(index+1)
                 plt.title(subtitle)
                 plt.savefig(save_results_in + 'code_' + str(randomnumbers[index]) 
-                                            + '_' + str(index+1) + '.png')  
-        
+                                            + '_' + str(index+1) + '.pdf')  
         plt.show()
         file.close()
-
 
 with open(save_results_in + 'models.txt', 'a+'):
     for i, aemodel in enumerate(aemodels):
 
         file = open(save_results_in + 'models.txt',"r")
-  
         readfile = file.read()
 
         # do not print model twice
@@ -543,7 +710,6 @@ with open(save_results_in + 'models.txt', 'a+'):
             file = open(save_results_in + 'models.txt', 'a'))
 
 file.close()
-
 
 for i, aemodel in enumerate(aemodels):
     print('\n\nModel ' + str(randomnumbers[i]) + '-' + str(i+1) + ':\n\n', 

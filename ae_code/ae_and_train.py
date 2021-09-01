@@ -22,7 +22,7 @@ from helper_functions import num_elements
 import torch.nn as nn
 import torch as pt
 import torch.optim as optim
-import torchvision      # for testing
+#import torchvision      # for testing
 
 
 class ConvBlock(nn.Module):
@@ -479,7 +479,9 @@ def build_model(X, architecture, activations, kernel_size=50):
     return model, device
 
 
-def prep_training(X, model, learning_rate, batch_size=1, targets=None):
+def prep_training(X, model, learning_rate, batch_size=1, 
+                                                data_type="1d_function",
+                                                targets=None):
     """
     Prepares the training process by creating an optimizer object, 
     defining the training loss and loading the training data.
@@ -518,14 +520,22 @@ def prep_training(X, model, learning_rate, batch_size=1, targets=None):
     # mean-squared error loss
     criterion = nn.MSELoss()
 
+    train_dataset = []
     # load train data
-    if targets != None:
-        train_dataset = []
-        for i in range(len(X.real.T)):
-            train_dataset.append([X.real.T[i], targets.real.T[i]])
-    else:
-        train_dataset = X.real.T
-    
+    if data_type == "1d_function":
+        if targets != None:
+            for i in range(len(X.real.T)):
+                train_dataset.append([X.real.T[i], targets.real.T[i]])
+        else:
+            train_dataset = X.real.T
+    elif data_type == "openFoam":
+        if targets != None:
+            for i in range(len(X.real.T)):
+                train_dataset.append([X.T[i], targets.T[i]])
+        else:
+            train_dataset = X.T
+
+
     # -----------------testing with MNIST--------------
     #transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
 
