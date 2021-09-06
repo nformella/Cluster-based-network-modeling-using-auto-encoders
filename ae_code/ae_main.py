@@ -109,12 +109,13 @@ import copy
 import itertools
 import random
 from flowtorch.data import FOAMDataloader, mask_box
+from visualization import plot_data_matrix, animate_flow
 #import torchvision # MNIST testing
 
 
 ##------------------------ Input data -------------------------------------##
 
-data_type = "openFoam" #"1d_function"  # "openFoam"
+data_type = "openFoam"        # "1d_function"  # "openFoam"
 
 # path to simulation data
 path = "/mnt/d/Studium/Studienarbeit/Daten/datasets/of_cylinder2D_binary"             
@@ -165,7 +166,7 @@ learning_rate = [1e-4,
 ]
 
 # global training settings
-epochs = 1000
+epochs = 5000
 time_mapping = False
 
 # Set figure options for plotting
@@ -180,7 +181,7 @@ print_reconLoss = True
 # animate the flow
 animation = True
 # print these reconstructed snapshots
-snapshots = (0,-1)
+snapshots = (0,50,-1)
 
 # Options related to reproducibility '''
 seed = 42
@@ -196,6 +197,9 @@ if not os.path.exists(save_results_in):
     os.makedirs(save_results_in)
 
 X = None
+x = None
+y = None
+
 if data_type == "1d_function":
   # Get matrix X that contains snapshots of the input signal at different
   # time steps 
@@ -451,113 +455,58 @@ with pt.no_grad():
 [rows, columns] = X_recon[0].shape
 fig_orig, ax1 = plt.subplots()
 
-def animate_orig(i):
-
-    plt.cla()
-    ax_anim = plt.gca()
-    ax_anim.tricontourf(x[::plot_every_vertex], y[::plot_every_vertex], 
-                                                X[::plot_every_vertex, i])
-    circ = plt.Circle((0.2, 0.2), 0.05, color='dimgrey')
-    ax_anim.add_patch(circ)
-    ax_anim.set_aspect("equal", 'box')
-    plt.title('Original flow')
-
-def animate_recon(i, subtitle):
-
-    plt.cla()
-    ax_anim = plt.gca()
-    ax_anim.tricontourf(x[::plot_every_vertex], y[::plot_every_vertex], 
-                                            X_rec[::plot_every_vertex, i])
-    circ = plt.Circle((0.2, 0.2), 0.05, color='dimgrey')
-    ax_anim.add_patch(circ)
-    ax_anim.set_aspect("equal", 'box')
-    plt.title(subtitle)
-
 # Set up formatting for movie files
 Writer = mpl.animation.writers['ffmpeg']
 writer = Writer(fps=15, metadata=dict(artist='nformella'), bitrate=7200)
 
-# set axis limits
-upper = 1.1
-lower = 0
-left = -1
-right = 1
 with pt.no_grad():
     # first plot original data
     if data_type == "1d_function":
-        for i in range(0, columns, plot_every_snapshot):
-            ax1.plot(x, X[:, i].real, color="b", alpha=1.0-0.01*i)
-            plt.title('Original time series data')
-            plt.xlabel('x')
-            bottom_new, top_new = plt.ylim()
-            left_new, right_new = plt.xlim()
 
-            plt.xlim(left,right)
-            if top_new > upper:
-                upper = top_new
-                plt.ylim(top=upper)
-            elif bottom_new < lower:
-                lower = bottom_new
-                plt.ylim(bottom=lower)
-            else:
-                plt.ylim(lower, upper)
+        subtitle = "Original time series data"
 
-            plt.savefig(save_results_in + 'original.pdf')
-
-        # comment out to show original data and reconstruction in same 
-        # fig
-        plt.show()
-        plt.clf()
+        fig, ax = plot_data_matrix(X, x, y, data_type, subtitle,
+                                                plot_every_snapshot)
+            
+        ax.get_figure().savefig(save_results_in + 'original.pdf')
 
     elif data_type == "openFoam":
         
-        ax1.tricontourf(x[::plot_every_vertex], y[::plot_every_vertex], 
-                                            X[::plot_every_vertex, -1])
-        cc = plt.Circle((0.2, 0.2), 0.05, color='dimgrey')
-        ax1.add_artist(cc)
-        ax1.set_aspect("equal", 'box')
-        plt.title('Original snapshot')
+        for idx, snapshot in enumerate(snapshots):
+                                
+            if snapshot == -1:
+                snapshot = columns - 1
+            
+            title = "Original data (snapshot " + str(snapshot) + ')'
+            fig, ax = plot_data_matrix(X, x, y, data_type, title,
+                                                plot_every_snapshot, 
+                                                snapshot,
+                                                plot_every_vertex)
         
-        
-        plt.savefig(save_results_in + 'original.pdf')
-        plt.show()
+            ax.get_figure().savefig(save_results_in + 'Original_snapshot_' 
+                                                + str(snapshot)
+                                                + '.pdf')
 
         if animation == True:
 
-            anim_orig = FuncAnimation(plt.gcf(), animate_orig, 
-                                        frames=range(0, columns, 
-                                            plot_every_snapshot), 
-                                                interval=200000) 
+            subtitle = "Original flow"
+            frames=range(0, columns, plot_every_snapshot)
+            anim_orig = animate_flow(X, x, y, frames, subtitle, plot_every_vertex)
+            
             anim_orig.save(save_results_in + 'orig.mp4', writer=writer)
-            plt.draw()
-            plt.show()
-            plt.clf()
                                                                             
     
     anim_recon = None
     # Plot each model's output
     for index, X_rec in enumerate(X_recon):
-        
+
         if data_type == "1d_function":
-            for i in range(0, columns, plot_every_snapshot):
-               plt.plot(x, X_rec[:, i], color="k", alpha=1.0-0.01*i)
-
-            plt.xlabel('x')
-            plt.xlim(left,right)
-            bottom_new, top_new = plt.ylim()
-            if top_new > upper:
-                upper = top_new
-                plt.ylim(top=upper)
-            elif bottom_new < lower:
-                lower = bottom_new
-                plt.ylim(bottom=lower)
-            else:
-                plt.ylim(lower, upper)
-
 
             subtitle = 'Model: ' + str(randomnumbers[index]) + '-' \
-                                                        + str(index+1)
-            plt.title(subtitle)
+                                                        + str(index+1)    
+
+            fig, ax = plot_data_matrix(X_rec, x, y, data_type, subtitle,
+                                                plot_every_snapshot)
 
             with open(save_results_in + 'models.txt', 'a+'):
             
@@ -569,60 +518,41 @@ with pt.no_grad():
                 # do not plot model twice
                 if parameters_str[index] not in readfile: 
 
-                    subtitle = 'Model: ' + str(randomnumbers[index]) \
-                                                    + '-' + str(index+1)
-                    plt.title(subtitle)
-                    plt.savefig(save_results_in + str(randomnumbers[index]) 
+                    ax.get_figure().savefig(save_results_in 
+                                                + str(randomnumbers[index]) 
                                                     + '_' + str(index+1) 
-                                                          + '_recon.pdf')  
-                                                                                    
-            plt.show()
+                                                    + '_recon.pdf')  
+                                                                                
             file.close()
 
         elif data_type == "openFoam":
-  
-            subtitle = 'Model: ' + str(randomnumbers[index]) + '-' \
-                                                            + str(index+1)
-
-            if animation == True:
-                anim_recon = FuncAnimation(plt.gcf(), animate_recon, 
-                                            frames=range(0, columns, 
-                                                        plot_every_snapshot), 
-                                                            interval=200000,
-                                                            fargs=(subtitle,))
-                                                                                       
-                plt.draw()
-                plt.show() 
-                plt.clf()
 
             ax_arr = []
             for idx, snapshot in enumerate(snapshots):
-                
-                if snapshot < columns:
                                             
-                    if snapshot == -1:
-                        snapshot = columns - 1
+                if snapshot == -1:
+                    snapshot = columns - 1
 
-                    subtitle_snap = 'Model: ' + str(randomnumbers[index]) \
-                                                        + '-' + str(index+1) \
-                                                        + ' (snapshot '  \
-                                                        + str(snapshot) + ')'
+                subtitle = 'Model: ' + str(randomnumbers[index]) \
+                                                    + '-' + str(index+1) \
+                                                    + ' (snapshot '  \
+                                                    + str(snapshot) + ')'
+
+                fig, ax = plot_data_matrix(X_rec, x, y, data_type, subtitle,
+                                                plot_every_snapshot, snapshot,
+                                                plot_every_vertex)
                     
-                    ax = plt.subplot(111)
-                    ax_arr.append(ax)
-                    ax_arr[idx].tricontourf(x[::plot_every_vertex], 
-                                                y[::plot_every_vertex], 
-                                                X_rec[::plot_every_vertex, 
-                                                                snapshot])   
-                    
-                    ax_arr[idx].set_title(subtitle_snap)
-                    plt.draw()
-                    plt.show()  
+                ax_arr.append(ax)  
 
-                else:
 
-                    raise ValueError("Snapshot " + str(snapshot) 
-                                                        + " out of range")     
+            if animation == True:
+                
+                subtitle = 'Model: ' + str(randomnumbers[index]) + '-' \
+                                                            + str(index+1)
+                frames=range(0, columns, plot_every_snapshot)
+                anim_recon = animate_flow(X_rec, x, y, frames, subtitle, 
+                                                    plot_every_vertex)
+
         
             with open(save_results_in + 'models.txt', 'a+'):
 
@@ -632,7 +562,13 @@ with pt.no_grad():
 
                 # do not plot model twice
                 if parameters_str[index] not in readfile: 
-
+                    
+                    if animation == True:
+                        
+                        anim_recon.save(save_results_in + str(randomnumbers[index]) 
+                                             + '_' + str(index+1) + '_recon.mp4', 
+                                                                    writer=writer)
+                    
                     for idx, snapshot in enumerate(snapshots):
                         if snapshot < columns:
 
@@ -651,11 +587,7 @@ with pt.no_grad():
                                                     + '_' + str(index+1) 
                                                     + '_snapshot_' + str(snapshot)
                                                     + '.pdf') 
-                    
-                    anim_recon.save(save_results_in + str(randomnumbers[index]) 
-                                             + '_' + str(index+1) + '_recon.mp4', 
-                                                                    writer=writer)
-                        
+                             
             file.close()
 
 plt.clf()
