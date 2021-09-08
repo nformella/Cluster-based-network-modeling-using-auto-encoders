@@ -59,6 +59,7 @@ class ConvBlock(nn.Module):
         return self.conv_activation(self.conv(x))
 
 
+
 class ConvTBlock(nn.Module):
     """    
     Class adds a block with a transposed convolutional layer 
@@ -92,6 +93,7 @@ class ConvTBlock(nn.Module):
 
     def forward(self, x):
         return self.conv_activation(self.conv(x))
+
 
 
 class LinearBlock(nn.Module):
@@ -152,6 +154,7 @@ class LinearBlock(nn.Module):
         return self.activation(self.linear(x))
 
 
+
 class AE(nn.Module):
     def __init__(self, input_shape, architecture, activations, 
                                                 kernel_size=50):
@@ -170,12 +173,12 @@ class AE(nn.Module):
                 Size of the convolving kernel. Default: 50
 
         """
+
         super(AE, self).__init__()
 
         self.layers = architecture.copy()
         self.layers.append(input_shape)
 
- 
         if (num_elements(self.layers) == len(activations)-1 and \
                 type(self.layers[0]) == list) \
             or \
@@ -193,174 +196,99 @@ class AE(nn.Module):
 
             raise ValueError("Number of activations must equal \
                         number of hidden self.layers + output layer!")
-        
+
         # Construct each layer followed by an activation function and
         # store it in self.blocks
         self.blocks = nn.ModuleList()
 
-        lout = 0
         in_neurons = input_shape
-        list_idx = 0
+        self.into_mid_fc_idx = 0
         self.into_convt_idx = 0
         self.into_final_fc_idx = 0
-        self.into_mid_fc_idx = 0
+        
+        list_idx = 0
         unnested_idx = 0
 
-        # Build convolutional blocks if requested
-        if type(self.layers[0]) == list:
-
+        if type(self.layers[0]) == list:  
+            unnested_idx, in_neurons = self.build_conv_blocks(kernel_size, 
+                                                            activations, 
+                                                            unnested_idx,
+                                                            input_shape)
             list_idx += 1
-            previous = self.layers[0][0]
-            for i in range(0, len(self.layers[0])-1):
-                self.blocks.append(ConvBlock(previous, 
-                                            self.layers[0][i+1], 
-                                            kernel_size, 
-                                            activations[unnested_idx]))
-                
-                unnested_idx += 1
-                previous = self.layers[0][i+1]
-                # Calculate number of flat features
-                if i == 0:
-                    lout = self.num_flat_features_conv(input_shape, 
-                                                        kernel_size)
-                else:
-                    lout = self.num_flat_features_conv(lout, kernel_size)
 
-            self.flatten1 = nn.Flatten() 
-
-            self.into_mid_fc_idx = len(self.layers[0]) - 1
-            conv_out_channels = self.layers[0][-1]
-            self.neurons_flattened = lout
-            in_neurons = conv_out_channels * lout
-
-
-        # build fully connected blocks and find the index of the latent vector
-        # (smallest number of neurons)
-        fewest_neurons_per_layer = in_neurons
+        # build fully connected blocks and find the index of the latent 
+        # vector (smallest number of neurons)
+        self.count = 0
         self.fewest_neurons_per_layer_idx = unnested_idx
-        previous = in_neurons
-        for i in range(list_idx, len(self.layers)):
+        list_idx, unnested_idx = self.build_fc_blocks(unnested_idx, in_neurons, 
+                                                                list_idx, 
+                                                                input_shape,
+                                                                activations)
+        if unnested_idx == 0:
+            return
 
-            if i+1 == len(self.layers) or self.layers[i] == 0 \
-                                    or type(self.layers[i+1]) == list:
-                
-                if type(self.layers[0]) == list and i+1 == len(self.layers):
-                    in_neurons = input_shape
+        # remember if build_fc_blocks has been called
+        self.count += 1
 
-                self.blocks.append(LinearBlock(previous, in_neurons, 
-                                            activations[unnested_idx]))
-                
-                
-                unnested_idx += 1
-                list_idx += 1
-
-                # update code index
-                if self.layers[i] <= previous and self.layers[i] != 0:
-                    fewest_neurons_per_layer = self.layers[i]
-                    self.fewest_neurons_per_layer_idx = unnested_idx-1
-                    
-
-                if i+1 == len(self.layers):
-                    return
-                
-                break
-
-            
-            self.blocks.append(LinearBlock(previous, 
-                                        self.layers[i], 
-                                        activations[unnested_idx]))
-            unnested_idx += 1
-            list_idx += 1
-
-            # update code index
-            if self.layers[i] <= previous and self.layers[i] != 0:
-                fewest_neurons_per_layer = self.layers[i]
-                self.fewest_neurons_per_layer_idx = unnested_idx-1
-
-
-            previous = self.layers[i]
-
-        self.into_convt_idx = unnested_idx      
+        self.into_convt_idx = unnested_idx
 
         # Build transposed convolutional blocks
-        self.into_convt_channels = self.layers[list_idx][0]
-        previous = self.layers[list_idx][0]       
-        for i in range(0, len(self.layers[list_idx])-1):
-            self.blocks.append(ConvTBlock(previous, 
-                                        self.layers[list_idx][i+1], 
-                                        kernel_size, activations[unnested_idx]))
-            unnested_idx += 1
-            previous = self.layers[list_idx][i+1]
-            # Calculate number of flat features
-            if i == 0:
-                lout = self.num_flat_features_convt(self.neurons_flattened, 
-                                                            kernel_size) 
-            else:
-                lout = self.num_flat_features_convt(lout, kernel_size)
-        
+        unnested_idx, lout = self.build_convt_blocks(list_idx, kernel_size, 
+                                                            activations, 
+                                                            unnested_idx)
         list_idx += 1
         self.into_final_fc_idx = unnested_idx
-        self.flatten2 = nn.Flatten()
+        self.flatten2 = nn.Flatten() 
 
         in_neurons =  lout
 
-        # return without final fc layer if not defined
-        if unnested_idx + 1  == num_elements(self.layers) - 2 \
+        # Return without final fc layer if it is not defined. Just use the 
+        # flattened vector in that case.
+        if unnested_idx == num_elements(self.layers) - 1 \
             and in_neurons == input_shape:
             return
 
+        # Only add a single fully connected block if the size of the 
+        # final user defined layer is not the size of the flattened
+        # vector.
         if in_neurons == self.layers[list_idx]:
-            unnested_idx += 1
-            list_idx += 1
-
-        # build final fully connected blocks
-        for i in range(list_idx, len(self.layers)):
-            self.blocks.append(LinearBlock(in_neurons, 
-                                    self.layers[i], activations[unnested_idx]))
-            unnested_idx += 1
-            in_neurons = self.layers[i]
-
-    def forward(self, x):
-        """
-        Takes in x, returns it as the model output after being passed 
-        through each block.
-
-        Parameters
-        ----------
-            x : array-like 
-                feature vector with dimension [batch_size, input features]  
-
-        Returns
-        ----------
-            x : array-like 
-                feature vector with dimension [batch_size, output features]  
-          
-        """
+            list_idx += 1 
         
-        for i, block in enumerate(self.blocks):
-            
-           
-            if i == 0 and type(self.layers[0]) == list and len(x.shape) == 2:
-                x = x.reshape(-1, self.layers[0][0], self.layers[-1])
+        # build final fully connected blocks
+        self.build_fc_blocks(unnested_idx, in_neurons, list_idx, 
+                                                        input_shape,
+                                                        activations)
 
-            if i == self.into_mid_fc_idx and self.into_mid_fc_idx != 0:
-                x = self.flatten1(x)
-            
-            if i == self.into_convt_idx and self.into_convt_idx != 0:
-                x = x.reshape(-1,self.into_convt_channels,self.neurons_flattened)
 
-            if i == self.into_final_fc_idx and self.into_final_fc_idx != 0:
-                x = self.flatten2(x)
 
-            if i == self.fewest_neurons_per_layer_idx:
-                code = block(x)
-            
-            x = block(x)   
+    def build_conv_blocks(self, kernel_size, activations, unnested_idx,
+                                                        input_shape):
 
-            if i == len(self.blocks)-1 and len(x.shape) == 3:
-                x = self.flatten2(x) 
+        previous = self.layers[0][0]
+        for i in range(0, len(self.layers[0])-1):
+            self.blocks.append(ConvBlock(previous, 
+                                    self.layers[0][i+1], 
+                                    kernel_size, 
+                                    activations[unnested_idx]))
+                
+            unnested_idx += 1
+            previous = self.layers[0][i+1]
+            # Calculate number of flat features
+            if i == 0:
+                lout = self.num_flat_features_conv(input_shape, 
+                                                        kernel_size)
+            else:
+                lout = self.num_flat_features_conv(lout, kernel_size)
 
-        return x, code
+        self.flatten1 = nn.Flatten() 
+
+        self.into_mid_fc_idx = len(self.layers[0]) - 1
+        conv_out_channels = self.layers[0][-1]
+        self.neurons_flattened = lout
+        in_neurons = conv_out_channels * lout
+
+        return unnested_idx, in_neurons
+
 
 
     def num_flat_features_conv(self, input_shape, kernel_size, stride=1, pad=0, 
@@ -394,6 +322,35 @@ class AE(nn.Module):
                                                     - 1)// stride + 1
         
         return lout
+
+
+
+    def build_convt_blocks(self, list_idx, kernel_size, activations, 
+                                                        unnested_idx):
+
+        # flattened vector is reshaped into a convt box without adding
+        # an additional block. This is accounted for by adding the "1" 
+        # to the unnested_idx
+        unnested_idx += 1 
+        self.into_convt_channels = self.layers[list_idx][0]
+        previous = self.layers[list_idx][0]       
+        for i in range(0, len(self.layers[list_idx])-1):
+            self.blocks.append(ConvTBlock(previous, 
+                                        self.layers[list_idx][i+1], 
+                                        kernel_size, 
+                                        activations[unnested_idx]))
+        
+            unnested_idx += 1
+            previous = self.layers[list_idx][i+1]
+            # Calculate number of flat features
+            if i == 0:
+                lout = self.num_flat_features_convt(self.neurons_flattened, 
+                                                            kernel_size) 
+            else:
+                lout = self.num_flat_features_convt(lout, kernel_size)
+
+        return unnested_idx, lout
+
 
 
     def num_flat_features_convt(self, lin, kernel_size, stride=1, pad=0, 
@@ -430,7 +387,107 @@ class AE(nn.Module):
         return lout
 
 
-                                                                                
+
+    def build_fc_blocks(self, unnested_idx, in_neurons, list_idx, 
+                                                        input_shape,
+                                                         activations):
+
+        #self.fewest_neurons_per_layer_idx = unnested_idx
+        lower = list_idx
+        previous = in_neurons
+        for i in range(lower, len(self.layers)):
+
+            if i+1 == len(self.layers) or self.layers[i] == 0 \
+                                or type(self.layers[i+1]) == list:
+
+                # if final AE layer is reached, this will reset the 
+                # out_features to the input_shape
+                if type(self.layers[0]) == list and \
+                                            i+1 == len(self.layers):
+                    in_neurons = input_shape
+
+                self.blocks.append(LinearBlock(previous, in_neurons, 
+                                            activations[unnested_idx]))
+                
+                
+                unnested_idx += 1
+                list_idx += 1
+
+                # update index of the latent feature vector
+                if self.count == 0:
+                    if self.layers[i] <= previous and self.layers[i] != 0:
+                        self.fewest_neurons_per_layer_idx = unnested_idx-1
+                    
+                if i+1 == len(self.layers):
+                    return 0, 0
+                
+                break
+                
+
+            self.blocks.append(LinearBlock(previous, self.layers[i], 
+                                        activations[unnested_idx]))
+        
+            unnested_idx += 1
+            list_idx += 1
+
+            # update index of the latent feature vector in mid fc blocks
+            if self.count == 0:
+                if self.layers[i] <= previous and self.layers[i] != 0:
+                    self.fewest_neurons_per_layer_idx = unnested_idx-1
+                # elif to return from encoder class
+                # return 0,0 ?
+
+            previous = self.layers[i]
+
+        return list_idx, unnested_idx
+
+
+
+    def forward(self, x):
+        """
+        Takes in x, returns it as the model output after being passed 
+        through each block.
+
+        Parameters
+        ----------
+            x : array-like 
+                feature vector with dimension [batch_size, input features]  
+
+        Returns
+        ----------
+            x : array-like 
+                feature vector with dimension [batch_size, output features]  
+          
+        """
+        
+        for i, block in enumerate(self.blocks):
+            
+
+            if i == 0 and type(self.layers[0]) == list and len(x.shape) == 2:
+                x = x.reshape(-1, self.layers[0][0], self.layers[-1])
+
+            if i == self.into_mid_fc_idx and self.into_mid_fc_idx != 0:
+                x = self.flatten1(x)
+            
+            if i == self.fewest_neurons_per_layer_idx:
+                code = block(x)
+                # Decoder should go here
+
+            if i == self.into_convt_idx and self.into_convt_idx != 0:
+                x = x.reshape(-1,self.into_convt_channels,self.neurons_flattened)
+
+            if i == self.into_final_fc_idx and self.into_final_fc_idx != 0:
+                x = self.flatten2(x)
+        
+            x = block(x)   
+
+            if i == len(self.blocks)-1 and len(x.shape) == 3:
+                x = self.flatten2(x) 
+
+        return x, code
+
+
+                                                                             
 def build_model(X, architecture, activations, kernel_size=50):
     """
     Creates a model from the `AE` autoencoder class and loads it to the 
