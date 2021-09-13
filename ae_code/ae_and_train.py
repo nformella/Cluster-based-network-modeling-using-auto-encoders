@@ -392,7 +392,6 @@ class AE(nn.Module):
                                                         input_shape,
                                                          activations):
 
-        #self.fewest_neurons_per_layer_idx = unnested_idx
         lower = list_idx
         previous = in_neurons
         for i in range(lower, len(self.layers)):
@@ -434,8 +433,6 @@ class AE(nn.Module):
             if self.count == 0:
                 if self.layers[i] <= previous and self.layers[i] != 0:
                     self.fewest_neurons_per_layer_idx = unnested_idx-1
-                # elif to return from encoder class
-                # return 0,0 ?
 
             previous = self.layers[i]
 
@@ -471,7 +468,6 @@ class AE(nn.Module):
             
             if i == self.fewest_neurons_per_layer_idx:
                 code = block(x)
-                # Decoder should go here
 
             if i == self.into_convt_idx and self.into_convt_idx != 0:
                 x = x.reshape(-1,self.into_convt_channels,self.neurons_flattened)

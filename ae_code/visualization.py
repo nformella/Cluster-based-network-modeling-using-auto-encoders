@@ -48,7 +48,7 @@ def plot_data_matrix(data_matrix, x, y, data_type,
     if data_type == "1d_function":
 
         for i in range(0, columns, plot_every_snapshot):
-            ax.plot(x, data_matrix[:, i], color="b", alpha=1.0-0.01*i)
+            ax.plot(x, data_matrix[:, i], color="k", alpha=1.0-0.01*i)
         
         ax.set_title(subtitle)
         ax.set_xlabel('x')

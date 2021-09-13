@@ -96,26 +96,23 @@ Example:
 import os
 
 from flowtorch import data
-from matplotlib.animation import FuncAnimation
 from helper_functions import num_elements
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-mpl.use("Agg")
 import torch as pt 
 import math
-from ae_and_train import build_model, prep_training, train_ae
+from ae_and_train_enc import build_model, prep_training, train_ae
 import load_data
 import copy
 import itertools
 import random
-from flowtorch.data import FOAMDataloader, mask_box
 from visualization import plot_data_matrix, animate_flow
 #import torchvision # MNIST testing
 
 
 ##------------------------ Input data -------------------------------------##
 
-data_type = "openFoam"        # "1d_function"  # "openFoam"
+data_type = "1d_function"  # "openFoam"
 
 # path to simulation data
 path = "/mnt/d/Studium/Studienarbeit/Daten/datasets/of_cylinder2D_binary"             
@@ -143,30 +140,30 @@ kernel_size = [10,
 ]
 
 ae_architecture = [
-#[[1, 6, 12], code, 0, [12, 6, 1], 1000],
-#[[1, 6], 10, code, 10, 0, [6, 1]],
-#[[1, 6, 12], 100, code, 100],
+[[1, 6, 12], code, 0, [12, 6, 1], 1000],
+#[[1, 6], 10, code, 0, [6, 1]],
+[[1, 6, 12], 100, code, 100],
 #[400, 200, 120, 80, 40, code, 40, 80, 120, 200, 400],
-[200, 40, code, 40, 200],
-[128, 128, code, 128]
+#[200, 40, code, 40, 200],
+#[128, 128, code, 128]
 ]
 
 activations = [
 [pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
 [pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.selu],
-[pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
-#[pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.selu],
-[pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.selu],
+[pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh, pt.tanh],
+[pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.selu], 
+[pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.selu, pt.tanh],
 ]
 
 batch_size = [512,
 ]
 
-learning_rate = [1e-4,
+learning_rate = [1e-3,
 ]
 
 # global training settings
-epochs = 5000
+epochs = 10000
 time_mapping = False
 
 # Set figure options for plotting
