@@ -94,25 +94,29 @@ Example:
 '''
 
 import os
-
+import time
 from flowtorch import data
 from helper_functions import num_elements
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import torch as pt 
 import math
-from ae_and_train_enc import build_model, prep_training, train_ae
+from ae_and_train import build_model, prep_training, train_ae, \
+                                                    count_parameters
 import load_data
 import copy
 import itertools
 import random
-from visualization import plot_data_matrix, animate_flow
+from visualization import plot_data_matrix, animate_flow, plot_code, plot_loss
 #import torchvision # MNIST testing
 
 
 ##------------------------ Input data -------------------------------------##
 
-data_type = "1d_function"  # "openFoam"
+data_type = "openFoam"         #"1d_function"  # "openFoam"
+# (field, component)
+field = ("U",1)
+
 
 # path to simulation data
 path = "/mnt/d/Studium/Studienarbeit/Daten/datasets/of_cylinder2D_binary"             
@@ -130,52 +134,76 @@ input_signal = [[test_signal], [1.0j], [1.0]]
 
 ##------------------------- USER DEFINED PARAMETERS ------------------------##
 
-save_results_in = "results/testing/"     
+save_results_in = "results/fully_connected/three_layer"     
 
 # autoencoder finds a representation for snapshots > t_start seconds
 t_start = 4.0
 
 code = 2
-kernel_size = [10,
+kernel_size = [50,
 ]
 
 ae_architecture = [
-[[1, 6, 12], code, 0, [12, 6, 1], 1000],
+#[[1, 6, 12], code, 0, [12, 6, 1], 1000],
 #[[1, 6], 10, code, 0, [6, 1]],
-[[1, 6, 12], 100, code, 100],
+#[[1, 6, 12], 100, code, 100],
 #[400, 200, 120, 80, 40, code, 40, 80, 120, 200, 400],
-#[200, 40, code, 40, 200],
-#[128, 128, code, 128]
+#[200, 12, code, 40, 200],
+[100, 1, 100],
+#[200, 1, 200],
+#[400, 1, 400],
+#[800, 1, 800],
+#[1600, 1, 1600],
+#[2400, 1, 2400],
+[1],
+[2],
+[3],
+[4],
 ]
 
 activations = [
 [pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
-[pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.selu],
-[pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh, pt.tanh],
-[pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.selu, pt.selu], 
-[pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.selu, pt.tanh],
+[pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu],
+[pt.relu, pt.relu, pt.relu, pt.relu],
+#[pt.relu, pt.relu], 
+[pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.selu, pt.selu],
 ]
 
-batch_size = [512,
+batch_size = [10,
 ]
 
-learning_rate = [1e-3,
+learning_rate = [1e-2, 1e-3, 1e-4, 1e-5
 ]
+
+multi_decoder = [False,
+]
+
+time_mapping = [False,
+]
+
 
 # global training settings
-epochs = 10000
-time_mapping = False
+epochs = 20000
+
 
 # Set figure options for plotting
 plot_every_vertex = 2
 plot_every_snapshot = 1
+
+# if datatype = openfoam this sets the contour min, max values
+vmin = -0.7
+vmax = 0.7
+colorbar_label = '$' + field[0] + '_' + str(field[1]+1) + '$'
+if field[0] == "U":
+    colorbar_label = '$' + "u" + '_' + str(field[1]+1) + '$'
+
 mpl.rcParams['figure.dpi'] = 160
 mpl.rcParams['figure.figsize'] = (8, 4)
 mpl.rcParams['axes.labelsize'] = "large"
 
 # prints the reconstruction loss if True
 print_reconLoss = True
-# animate the flow
+# animate flow in video
 animation = True
 # print these reconstructed snapshots
 snapshots = (0,50,-1)
@@ -193,6 +221,8 @@ pt.backends.cudnn.deterministic = True
 if not os.path.exists(save_results_in):
     os.makedirs(save_results_in)
 
+seed = pt.initial_seed()
+
 X = None
 x = None
 y = None
@@ -201,14 +231,10 @@ if data_type == "1d_function":
   # Get matrix X that contains snapshots of the input signal at different
   # time steps 
   x, t, X = load_data.create_1d_funct_data(*input_signal)
+  field = ("1d_function")
 elif data_type == "openFoam":
-  x, y, X = load_data.load_openfoam_data(path, t_start, plot_every_vertex)
+  x, y, X = load_data.load_openfoam_data(path, field, t_start, plot_every_vertex)
 
-# get size of a snapshot taken at any time t
-Y = X[:, 1:]
-
-if time_mapping == False:
-    Y = None
 
 X = X[:, 0:-1]
 [rows, columns] = X.shape
@@ -220,13 +246,16 @@ datapnts_at_t = rows
 aemodels = [] 
 code = []
 loss_lists = []
+stop_time_list = []
 previous_paras = [0,0,0,0,0]
 same_except_kernel = 0
 # Build autoencoder network and train it for each set of parameters
 count_models = 0
 for paras in itertools.product(ae_architecture, activations, kernel_size, 
-                                                    learning_rate, 
-                                                    batch_size):
+                                                        multi_decoder,
+                                                        learning_rate, 
+                                                        batch_size,
+                                                        time_mapping):
     
     # Preselection: Number of activation functions must match corresponding 
     # number of layers
@@ -235,11 +264,13 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
         or \
             (len(paras[0]) == len(paras[1])-1 and type(paras[0][0]) == int):
 
+        Y = load_data.set_mapping_target(X, paras[6])
+
         if type(paras[0][0]) == list:
-            model, device = build_model(X, *paras[0:3]) 
+            model, device = build_model(X, *paras[0:4]) 
             count_models += 1
             optimizer, criterion, train_loader = prep_training(X, model,
-                                                            *paras[3:], 
+                                                            *paras[4:6], 
                                                             data_type, Y)
         
         # avoid multiple instances of the same fully connected model if 
@@ -250,9 +281,9 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
              break        
         
         else:
-            model, device = build_model(X, *paras[0:3])
+            model, device = build_model(X, *paras[0:4])
             optimizer, criterion, train_loader = prep_training(X, model,
-                                                            *paras[3:], 
+                                                            *paras[4:6], 
                                                             data_type,
                                                             Y)
             previous_paras = paras
@@ -261,12 +292,19 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
             # [0,0,0,0,0]
             same_except_kernel += 1
             count_models += 1
-    
-        # train autoencoder with data from X
-        loss_values, code = train_ae(model, epochs, train_loader, datapnts_at_t, 
-                                            optimizer, criterion, device, 
-                                            print_reconLoss, time_mapping)
 
+        tic= time.perf_counter()
+        # train autoencoder with data from X
+        loss_values, code, dec_out_list = train_ae(model, epochs, train_loader, 
+                                                    datapnts_at_t, optimizer, 
+                                                    criterion, device, 
+                                                    print_reconLoss, paras[6])
+
+        # measure training time
+        toc = time.perf_counter()
+        duration = toc - tic
+        stop_time_list.append(duration)
+        
         aemodels.append(copy.deepcopy(model)) 
         loss_lists.append((loss_values))
 
@@ -289,15 +327,18 @@ if count_models == 0:
 
 
 marker = itertools.cycle((',', '+', '.', 'o', '*'))
-fig_loss = plt.figure()
-ax = plt.subplot(111)
+fig = plt.figure()
+ax = fig.add_subplot(111)
 
 parameters_str = []
 index = 0
 same_except_kernel = 0
 randomnumbers = []
 for paras in itertools.product(ae_architecture, activations, kernel_size,
-                                                learning_rate, batch_size):
+                                                        multi_decoder, 
+                                                        learning_rate, 
+                                                        batch_size,
+                                                        time_mapping):
     
     # Plot reconstruction loss only if number of activation functions matches
     # number of layers
@@ -315,16 +356,20 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
 
             model_activations_str += activation_as_str
         
-        parameters = []
+        parameters = 'none'
         if type(paras[0][0]) == list:
 
             randomnumber = random.randint(1, 10000)
             randomnumbers.append(randomnumber)
             parameters = str(paras[0]) + ',\n[' + str(model_activations_str) + '],'\
-                                    + '\nbatch_size = ' + str(paras[4]) \
+                                    + '\nbatch_size = ' + str(paras[5]) \
                                     + ', epochs = ' + str(epochs) \
                                     + ', kernel_size = ' + str(paras[2]) \
-                                    + ', learning_rate = ' + str(paras[3])
+                                    + ', learning_rate = ' + str(paras[4]) \
+                                    + ', multi_decoder = ' + str(paras[3]) \
+                                    + ',\n' \
+                                    + 'time_mapping = ' + str(paras[6]) \
+                    + ', data_type = ' + data_type + ', Input data= ' + str(field)
         
         elif previous_paras[0:2] == paras[0:2] and \
                     previous_paras[3:] == paras[3:] and \
@@ -336,20 +381,21 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
             randomnumber = random.randint(1, 10000)
             randomnumbers.append(randomnumber)
             parameters = str(paras[0]) + ',\n[' + str(model_activations_str) + '],' \
-                                    + '\nbatch_size = ' + str(paras[4]) \
+                                    + '\nbatch_size = ' + str(paras[5]) \
                                     + ', epochs = ' + str(epochs) \
-                                    + ', learning_rate = ' + str(paras[3])
+                                    + ', learning_rate = ' + str(paras[4]) \
+                                    + ', multi_decoder = ' + str(paras[3]) + ',\n' \
+                                    + 'time_mapping = ' + str(paras[6]) \
+                        + ', data_type = ' + data_type + ', Input data= ' + str(field)
 
             previous_paras = paras
             same_except_kernel += 1
             
         # store each models parameter string in a list for later use
         parameters_str.append(parameters) 
-        ax.semilogy(loss_lists[index-1], label=('Model: ' + str(randomnumber) 
-                                                        + '-' + str(index)),
-                                                        marker=next(marker), 
-                                                        ms=5, markevery=100)
-        ax.legend()
+
+        label = 'Model: ' + str(randomnumber) + '-' + str(index)
+        title = r'$Training$'
 
         # save loss figure for each model
         with open(save_results_in + 'models.txt', 'a+'):
@@ -360,27 +406,15 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
             readfile = file.read()
 
             # do not plot model twice
-            if parameters not in readfile: 
+            if parameters not in readfile:    
                 
-                plt.figure()
-                plt.semilogy(loss_lists[index-1], label=('Model: ' 
-                                                            + str(randomnumber)
-                                                            + '-' + str(index)))    
-                
+                label = 'Model: ' + str(randomnumber) + '-' + str(index)
                 subtitle = 'Training: ' + str(randomnumber) + '-' + str(index)
-                plt.title(subtitle)
-                plt.xlabel('epochs')
-                plt.ylabel('loss')
-                plt.savefig(save_results_in + 'loss_' + str(randomnumber) 
+
+                fig2, ax2 = plot_loss(loss_lists[index-1], label, subtitle)
+
+                ax2.get_figure().savefig(save_results_in + 'loss_' + str(randomnumber) 
                                             + '_' + str(index) + '.pdf')
-
-ax.title.set_text('Training')
-
-ax.set_xlabel('epochs')
-ax.set_ylabel('loss')
-
-plt.show()
-plt.clf()
 
 
 # Load test data. Currently set to train data
@@ -409,6 +443,7 @@ test_loader = pt.utils.data.DataLoader(
 
 X_recon = []
 codes = []
+dec_out_list = []
 test_examples = None
 
 with pt.no_grad():
@@ -416,13 +451,19 @@ with pt.no_grad():
         for batch_features in test_loader:
             #batch_features = batch_features[0] # MNIST test
             test_examples = batch_features.view(-1, datapnts_at_t)
-            X_recon_tensor, code_tensor = aemodel(test_examples)
+            X_recon_tensor, code_tensor, dec_outs = aemodel(test_examples)
             X_recon_tensor = X_recon_tensor.T  # MNIST test
             code_tensor = code_tensor.T
+            
+            dec_out_tensors = []
+            for dec_out_tensor in dec_outs:
+                dec_out_tensor = dec_out_tensor.T
+                dec_out_tensors.append(dec_out_tensor)
+
+            dec_out_list.append(dec_out_tensors)
             X_recon.append(X_recon_tensor)
             codes.append(code_tensor)
             break
-
 
 ## MNIST testing--------------------
 #with pt.no_grad():
@@ -449,8 +490,14 @@ with pt.no_grad():
 
 # -----------------------------------
 
+
+colorbar_label = '$' + field[0] + '_' + str(field[1]+1) + '$'
+if field[0] == "U" and field[1] == 0:
+    colorbar_label = '$u$'
+elif field[0] == "U" and field[1] == 1:
+    colorbar_label = '$v$'
+
 [rows, columns] = X_recon[0].shape
-fig_orig, ax1 = plt.subplots()
 
 # Set up formatting for movie files
 Writer = mpl.animation.writers['ffmpeg']
@@ -460,7 +507,7 @@ with pt.no_grad():
     # first plot original data
     if data_type == "1d_function":
 
-        subtitle = "Original time series data"
+        subtitle = "$Original time series data$"
 
         fig, ax = plot_data_matrix(X, x, y, data_type, subtitle,
                                                 plot_every_snapshot)
@@ -478,7 +525,9 @@ with pt.no_grad():
             fig, ax = plot_data_matrix(X, x, y, data_type, title,
                                                 plot_every_snapshot, 
                                                 snapshot,
-                                                plot_every_vertex)
+                                                plot_every_vertex,
+                                                colorbar_label,
+                                                vmin, vmax)
         
             ax.get_figure().savefig(save_results_in + 'Original_snapshot_' 
                                                 + str(snapshot)
@@ -486,9 +535,10 @@ with pt.no_grad():
 
         if animation == True:
 
-            subtitle = "Original flow"
+            subtitle = "$Original flow$"
             frames=range(0, columns, plot_every_snapshot)
-            anim_orig = animate_flow(X, x, y, frames, subtitle, plot_every_vertex)
+            anim_orig = animate_flow(X, x, y, frames, subtitle, plot_every_vertex,
+                                                colorbar_label, vmin, vmax)
             
             anim_orig.save(save_results_in + 'orig.mp4', writer=writer)
                                                                             
@@ -499,8 +549,8 @@ with pt.no_grad():
 
         if data_type == "1d_function":
 
-            subtitle = 'Model: ' + str(randomnumbers[index]) + '-' \
-                                                        + str(index+1)    
+            subtitle = '$Model: ' + str(randomnumbers[index]) + '-' \
+                                                        + str(index+1) + '$'    
 
             fig, ax = plot_data_matrix(X_rec, x, y, data_type, subtitle,
                                                 plot_every_snapshot)
@@ -537,7 +587,8 @@ with pt.no_grad():
 
                 fig, ax = plot_data_matrix(X_rec, x, y, data_type, subtitle,
                                                 plot_every_snapshot, snapshot,
-                                                plot_every_vertex)
+                                                plot_every_vertex, 
+                                                colorbar_label, vmin, vmax)
                     
                 ax_arr.append(ax)  
 
@@ -545,10 +596,13 @@ with pt.no_grad():
             if animation == True:
                 
                 subtitle = 'Model: ' + str(randomnumbers[index]) + '-' \
-                                                            + str(index+1)
+                                                            + str(index+1) \
+                                                        
                 frames=range(0, columns, plot_every_snapshot)
                 anim_recon = animate_flow(X_rec, x, y, frames, subtitle, 
-                                                    plot_every_vertex)
+                                                    plot_every_vertex,
+                                                    colorbar_label, 
+                                                    vmin, vmax)
 
         
             with open(save_results_in + 'models.txt', 'a+'):
@@ -587,25 +641,20 @@ with pt.no_grad():
                              
             file.close()
 
-plt.clf()
 
-axes = []
-
-# code visualization
-[rows, columns] = codes[0].shape
-x1 = list(range(1, columns+1))
+# Latent feature visualization
 with pt.no_grad():
-    # Plot each models latent features
+    # Plot each model's latent features
+    axes = []
     for index, code in enumerate(codes):
-        ax2 = plt.subplot(111)
-        axes.append(ax2)
-        for j in range(0, rows):
-            axes[index].plot(x1, code[j], color="k", label='neuron '
-                                 + str(j+1), marker=next(marker))
 
-        axes[index].set_title('Latent features: Model ' 
-                + str(randomnumbers[index]) + '-' + str(index+1))  
-        axes[index].legend()
+        
+        title = "Latent features: Model "  + \
+                str(randomnumbers[index]) + '-' + str(index+1)
+
+        fig, ax = plot_code(code, title)
+        
+        axes.append(ax)
 
         with open(save_results_in + 'models.txt', 'a+'):
             
@@ -617,14 +666,145 @@ with pt.no_grad():
             # do not plot model twice
             if parameters_str[index] not in readfile: 
                     
-                subtitle = 'Latent features: Model ' + str(randomnumbers[index]) \
-                                                    + '-' + str(index+1)
-                plt.title(subtitle)
-                plt.savefig(save_results_in + 'code_' + str(randomnumbers[index]) 
-                                            + '_' + str(index+1) + '.pdf')  
-        plt.show()
+                axes[index].set_title(title)
+
+                axes[index].get_figure().savefig(save_results_in + 'code_' 
+                                                + str(randomnumbers[index]) 
+                                                + '_' + str(index+1) + '.pdf')  
+        
         file.close()
 
+
+# Multiple decoder output
+with pt.no_grad():
+    
+    anim_recon = None
+    # Plot each model's output
+    for index, dec_outs in enumerate(dec_out_list):
+
+        if data_type == "1d_function":
+            axes = []
+            for i, dec_out in enumerate(dec_outs):
+
+                if len(dec_outs) == 1:
+                    break
+
+                subtitle = 'Model: ' + str(randomnumbers[index]) + '-' \
+                                        + str(index+1) + ' (Decoder: ' \
+                                        + str(i+1)
+
+                fig, ax = plot_data_matrix(dec_out, x, y, data_type, 
+                                        subtitle, plot_every_snapshot,
+                                        colorbar_label, vmin, vmax)
+                
+                axes.append(ax)
+
+                axes[i].get_figure().savefig(save_results_in 
+                                                + str(randomnumbers[index]) 
+                                                + '_' + str(index+1) 
+                                                + '_decoder(' + str(i+1) + ').pdf')  
+
+            with open(save_results_in + 'models.txt', 'a+'):
+            
+
+                file = open(save_results_in + 'models.txt',"r")
+    
+                readfile = file.read()
+
+                # do not plot model twice
+                if parameters_str[index] not in readfile: 
+                    
+                    for i, dec_out in enumerate(dec_outs):
+
+                        if len(dec_outs) == 1:
+                            break
+                        
+                        axes[i].get_figure().savefig(save_results_in 
+                                                + str(randomnumbers[index]) 
+                                                + '_' + str(index+1) 
+                                                + '_decoder(' + str(i+1) + ').pdf')  
+
+
+            file.close()
+
+        elif data_type == "openFoam":
+            
+            ax_arr = []
+            for i, dec_out in enumerate(dec_outs):
+                
+                if len(dec_outs) == 1:
+                    break
+                
+                for idx, snapshot in enumerate(snapshots):
+
+                    if snapshot == -1:
+                        snapshot = columns - 1
+
+
+                    subtitle = 'Model: ' + str(randomnumbers[index]) + '-' \
+                                        + str(index+1) + ' (Decoder: ' \
+                                        + str(i+1) + ', snapshot: ' + str(snapshot)
+
+                    fig, ax = plot_data_matrix(dec_out, x, y, data_type, subtitle,
+                                                    plot_every_snapshot, snapshot,
+                                                    plot_every_vertex, 
+                                                    colorbar_label, vmin, vmax)
+
+                    ax_arr.append(ax)  
+
+
+                if animation == True:
+
+                    subtitle = 'Model: ' + str(randomnumbers[index]) + '-' \
+                                                + str(index+1) + ' (Decoder: ' \
+                                                + str(i+1)
+                    frames=range(0, columns, plot_every_snapshot)
+                    anim_recon = animate_flow(dec_out, x, y, frames, subtitle, 
+                                                    plot_every_vertex, 
+                                                    colorbar_label, vmin, vmax)
+
+
+                with open(save_results_in + 'models.txt', 'a+'):
+
+                    file = open(save_results_in + 'models.txt',"r")
+
+                    readfile = file.read()
+
+                    # do not plot model twice
+                    if parameters_str[index] not in readfile: 
+
+                        if animation == True:
+
+                            anim_recon.save(save_results_in + str(randomnumbers[index]) 
+                                                 + '_' + str(index+1) + '(Decoder(' 
+                                                 + str(i+1) + ').mp4', 
+                                                writer=writer)
+
+                        for idx, snapshot in enumerate(snapshots):
+                            if snapshot < columns:
+
+                                if snapshot == -1:
+                                    snapshot = columns - 1
+
+                                subtitle_snap = 'Model: ' + str(randomnumbers[index]) \
+                                                            + '-' + str(index+1) \
+                                                            + ' (Decoder(' + str(i+1) + '), ' \
+                                                            + 'snapshot '  \
+                                                            + str(snapshot)
+
+                                ax_arr[idx].set_title(subtitle_snap)
+
+                                ax_arr[idx].get_figure().savefig(save_results_in
+                                                        + str(randomnumbers[index]) 
+                                                        + '_' + str(index+1) 
+                                                        + '_(snapshot(' + str(snapshot) 
+                                                        + ')Decoder(' + str(i+1)
+                                                        + ')).pdf') 
+
+                file.close()
+
+
+# write to text file
 with open(save_results_in + 'models.txt', 'a+'):
     for i, aemodel in enumerate(aemodels):
 
@@ -634,16 +814,42 @@ with open(save_results_in + 'models.txt', 'a+'):
         # do not print model twice
         if parameters_str[i] not in readfile: 
             
-            print('\n\nModel ' + str(randomnumbers[i]) + '-' + str(i+1) 
-            + ':\n\n', parameters_str[i], '\n\n\n', aemodel,'\n',
-            file = open(save_results_in + 'models.txt', 'a'))
+            total_params, table = count_parameters(aemodel)
 
+            show_loss = []
+            if len(loss_lists[i]) > 3:
+                show_loss.append(loss_lists[i][-3:])
+            else:
+                show_loss.append(loss_lists[i][-len(loss_lists[i]):])
+
+            print('\n\nModel ' + str(randomnumbers[i]) + '-' + str(i+1) + ':\n\n\n', 
+                    parameters_str[i], '\n\n', 'Training time spent: ',
+                    str(round(stop_time_list[i],4)), ' s\n',
+                    #'Data: ', str(field), '\n',
+                    'Initial seed: ', str(seed), 
+                    '\nEpoch training loss (last values): ', '\n',
+                    show_loss, '\n\n',
+                    aemodel,'\n\n',
+                    table, '\n', f"Total Trainable Params: {total_params}", '\n\n', 
+                    '\n---------------------------------------------------------------------',
+                    '\n---------------------------------------------------------------------',
+                    sep='', 
+                    file = open(save_results_in + 'models.txt', 'a'))
+                                                                               
 file.close()
+
 
 for i, aemodel in enumerate(aemodels):
     print('\n\nModel ' + str(randomnumbers[i]) + '-' + str(i+1) + ':\n\n', 
             'User input:\n\n', 
-            parameters_str[i], '\n\n\n', aemodel,'\n') 
+            parameters_str[i], '\n\n', 'Training time spent: ', 
+            str(round(stop_time_list[i],4)), ' s\n\n',
+            aemodel,'\n', sep='') 
+    total_params, table = count_parameters(aemodel)
+    print(table)
+    print(f"Total Trainable Params: {total_params}")
 
 #for name, param in aemodel.named_parameters():
 #    print(f"Layer: {name} | Size: {param.size()} | Values : {param[:2]} \n")
+
+print('\nDone :-) !!')

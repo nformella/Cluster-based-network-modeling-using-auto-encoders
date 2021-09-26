@@ -23,6 +23,7 @@ import torch.nn as nn
 import torch as pt
 import torch.optim as optim
 #import torchvision      # for testing
+from prettytable import PrettyTable
 
 
 class ConvBlock(nn.Module):
@@ -155,7 +156,492 @@ class LinearBlock(nn.Module):
 
 
 
+class NNDecoder(nn.Module):
+    def __init__(self, input_shape, architecture, activations, 
+                                                kernel_size,
+                                                list_idx,
+                                                unnested_idx,
+                                                in_neurons,
+                                                neurons_flattened,
+                                                latent_features,
+                                                multi_decoder=False):
+
+        super(NNDecoder, self).__init__()
+
+        self.layers = architecture.copy()
+        self.layers.append(input_shape)
+        self.neurons_flattened = neurons_flattened
+        self.into_final_fc_idx = 0
+
+        self.into_convt_idx = 0
+
+        fewest_neurons_per_layer_idx = unnested_idx
+    
+        # Construct each layer followed by an activation function and
+        # store it in self.blocks
+        self.blocks = nn.ModuleList()
+
+        self.count = 0
+
+        list_idx, unnested_idx = self.build_fc_blocks(unnested_idx, 
+                                                        in_neurons,
+                                                        latent_features, 
+                                                        list_idx, 
+                                                        input_shape,
+                                                        activations,
+                                                        multi_decoder)
+        if unnested_idx == 0:
+            return
+
+        self.count += 1
+        self.into_convt_idx = unnested_idx - fewest_neurons_per_layer_idx
+
+        # Build transposed convolutional blocks
+        unnested_idx, lout = self.build_convt_blocks(list_idx, kernel_size, 
+                                                            activations, 
+                                                            unnested_idx)
+        list_idx += 1
+        self.into_final_fc_idx = unnested_idx - fewest_neurons_per_layer_idx
+        self.flatten2 = nn.Flatten() 
+
+        in_neurons =  lout
+
+        # Return without final fc layer if it is not defined. Just use the 
+        # flattened vector in that case.
+        if unnested_idx == num_elements(self.layers) - 1 \
+            and in_neurons == input_shape:
+            return
+
+        # Only add a single fully connected block if the size of the 
+        # final user defined layer is not the size of the flattened
+        # vector.
+        if in_neurons == self.layers[list_idx]:
+            list_idx += 1 
+        
+        # build final fully connected blocks
+        self.build_fc_blocks(unnested_idx, in_neurons, latent_features,
+                                                        list_idx, 
+                                                        input_shape,
+                                                        activations)
+
+        
+
+    def build_fc_blocks(self, unnested_idx, in_neurons, latent_features,
+                                                             list_idx, 
+                                                            input_shape,
+                                                            activations,
+                                                    multi_decoder=False):
+
+        lower = list_idx
+
+        previous = latent_features
+
+        # If each latent feature has its own decoder
+        if self.count == 0 and multi_decoder == True:
+            previous = 1
+        elif self.count == 1:
+            previous = self.layers[list_idx-1]
+        
+        for i in range(lower, len(self.layers)):
+
+            if i+1 == len(self.layers) or self.layers[i] == 0 \
+                                or type(self.layers[i+1]) == list:
+
+                # If final AE layer is reached, this will reset the 
+                # out_features to the input_shape
+                if type(self.layers[0]) == list and \
+                                            i+1 == len(self.layers):
+                    in_neurons = input_shape
+
+                self.blocks.append(LinearBlock(previous, in_neurons, 
+                                            activations[unnested_idx]))
+                
+                
+                unnested_idx += 1
+                list_idx += 1
+   
+                if i+1 == len(self.layers):
+                    return 0, 0
+                
+                break
+                
+
+            self.blocks.append(LinearBlock(previous, self.layers[i], 
+                                        activations[unnested_idx]))
+        
+            unnested_idx += 1
+            list_idx += 1
+
+            previous = self.layers[i]
+
+        return list_idx, unnested_idx
+
+
+    def build_convt_blocks(self, list_idx, kernel_size, activations, 
+                                                        unnested_idx):
+
+        # Flattened vector is reshaped into a convt box without adding
+        # an additional block. This is accounted for by adding the "1" 
+        # to the unnested_idx
+        unnested_idx += 1 
+        self.into_convt_channels = self.layers[list_idx][0]
+        previous = self.layers[list_idx][0]       
+        for i in range(0, len(self.layers[list_idx])-1):
+            self.blocks.append(ConvTBlock(previous, 
+                                        self.layers[list_idx][i+1], 
+                                        kernel_size, 
+                                        activations[unnested_idx]))
+        
+            unnested_idx += 1
+            previous = self.layers[list_idx][i+1]
+            # Calculate number of flat features
+            if i == 0:
+                lout = self.num_flat_features_convt(self.neurons_flattened, 
+                                                            kernel_size) 
+            else:
+                lout = self.num_flat_features_convt(lout, kernel_size)
+
+        return unnested_idx, lout
+
+
+
+    def num_flat_features_convt(self, lin, kernel_size, stride=1, pad=0, 
+                                                dilation=1, out_pad=0):
+        """
+        Takes in a height of data points, kernel_size, stride, pad, dilation 
+        and returns the calculated height after a transposed convolutional 
+        block.
+
+        Parameters
+        ----------
+            
+            dilation: int or tuple, optional
+                Spacing between kernel elements. Default: 1
+            input_shape : int
+                Height of data points
+            kernel_size : int or tuple
+                Size of the convolving kernel. Default: 1
+            out_pad: int or tuple, optional
+                Zero-padding added to both sides of the input. Default: 0
+            stride: int or tuple, optional
+                Stride of the convolution. Default: 1  
+
+        Returns
+        ----------
+            lout : int
+                Height of data points  
+          
+        """
+
+        lout = (lin -1)  * stride - 2 * pad  + dilation * (kernel_size - 1) \
+                                                    +  out_pad + 1
+        
+        return lout  
+
+
+    def forward(self, x):
+        """
+        Takes in x, returns it as the model output after being passed 
+        through each block of the decoder.
+
+        Parameters
+        ----------
+            x : array-like 
+                feature vector with dimension [batch_size, input features]  
+
+        Returns
+        ----------
+            x : array-like 
+                feature vector with dimension [batch_size, output features]  
+          
+        """
+        
+        for i, block in enumerate(self.blocks):
+            
+
+            if i == self.into_convt_idx and self.into_convt_idx != 0:
+                x = x.reshape(-1,self.into_convt_channels,self.neurons_flattened)
+
+            if i == self.into_final_fc_idx and self.into_final_fc_idx != 0:
+                x = self.flatten2(x)
+        
+            x = block(x)   
+
+            if i == len(self.blocks)-1 and len(x.shape) == 3:
+                x = self.flatten2(x) 
+
+        return x
+
+
+class NNEncoder(nn.Module):
+    def __init__(self, input_shape, architecture, activations, 
+                                                kernel_size=50):
+
+        super(NNEncoder, self).__init__()
+
+        self.layers = architecture.copy()
+        self.layers.append(input_shape)
+
+        if (num_elements(self.layers) == len(activations)-1 and \
+                type(self.layers[0]) == list) \
+            or \
+                (len(self.layers) == len(activations)+1 and \
+                type(self.layers[0]) == int):
+            
+            raise ValueError("No activation function for final \
+                                    (reconstruction) layer given!")
+
+        elif (num_elements(self.layers) != len(activations)+1 and \
+                                        type(self.layers[0]) == list) \
+            or \
+                (len(self.layers) != len(activations) and \
+                                        type(self.layers[0]) == int):
+
+            raise ValueError("Number of activations must equal \
+                        number of hidden self.layers + output layer!")
+
+        # Construct each layer followed by an activation function and
+        # store it in self.blocks
+        self.blocks = nn.ModuleList()
+
+        self.in_neurons = input_shape
+        self.into_mid_fc_idx = 0
+        self.into_convt_idx = 0
+        self.into_final_fc_idx = 0
+        self.neurons_flattened = 0
+        self.fewest_neurons_per_layer_idx = 0
+        
+        self.list_idx = 0
+        self.unnested_idx = 0
+
+        if type(self.layers[0]) == list:  
+            self.build_conv_blocks(kernel_size, activations, input_shape)
+            self.list_idx += 1
+
+        # build fully connected blocks and find the index of the latent 
+        # vector (smallest number of neurons)
+        self.fewest_neurons_per_layer_idx = self.list_idx-1
+        self.build_fc_blocks(input_shape,activations)
+        self.latent_features = self.layers[self.fewest_neurons_per_layer_idx]
+
+
+
+    def build_conv_blocks(self, kernel_size, activations, input_shape):
+
+        previous = self.layers[0][0]
+        for i in range(0, len(self.layers[0])-1):
+            self.blocks.append(ConvBlock(previous, 
+                                    self.layers[0][i+1], 
+                                    kernel_size, 
+                                    activations[self.unnested_idx]))
+                
+            self.unnested_idx += 1
+            previous = self.layers[0][i+1]
+            # Calculate number of flat features
+            if i == 0:
+                lout = self.num_flat_features_conv(input_shape, 
+                                                        kernel_size)
+            else:
+                lout = self.num_flat_features_conv(lout, kernel_size)
+
+        self.flatten1 = nn.Flatten() 
+
+        self.into_mid_fc_idx = len(self.layers[0]) - 1
+        conv_out_channels = self.layers[0][-1]
+        self.neurons_flattened = lout
+        self.in_neurons = conv_out_channels * lout
+
+
+
+    def num_flat_features_conv(self, input_shape, kernel_size, stride=1, pad=0, 
+                                                                dilation=1):
+        """
+        Takes in the input_shape, kernel_size, stride, pad, dilation and 
+        returns the calculated height after a convolutional block.
+
+        Parameters
+        ----------
+            
+            dilation: int or tuple, optional
+                Spacing between kernel elements. Default: 1
+            input_shape : int
+                Height of data points
+            kernel_size : int or tuple
+                Size of the convolving kernel.
+            pad: int or tuple, optional
+                Zero-padding added to both sides of the input. Default: 0
+            stride: int or tuple, optional
+                Stride of the convolution. Default: 1  
+
+        Returns
+        ----------
+            lout : int
+                Height of data points  
+          
+        """
+
+        lout = (input_shape + (2 * pad) - (dilation * (kernel_size - 1)) \
+                                                    - 1)// stride + 1
+        
+        return lout   
+
+
+
+    def build_fc_blocks(self, input_shape, activations):
+
+        lower = self.list_idx
+        previous = self.in_neurons
+        for i in range(lower, len(self.layers)):
+
+            if i+1 == len(self.layers) or self.layers[i] == 0 \
+                                or type(self.layers[i+1]) == list:
+
+                # update index of the latent feature vector
+                if self.layers[i] <= previous and self.layers[i] != 0:
+                    self.fewest_neurons_per_layer_idx = self.unnested_idx
+                
+                return
+
+
+            # update index of the latent feature vector in mid fc blocks
+            if self.layers[i] <= previous:
+                
+                self.blocks.append(LinearBlock(previous, self.layers[i], 
+                                        activations[self.unnested_idx]))
+
+                self.unnested_idx += 1
+                self.list_idx += 1
+            
+            elif self.layers[i] > previous:
+                return
+
+            previous = self.layers[i]
+            self.fewest_neurons_per_layer_idx += 1
+
+
+
+    def get_list_idx(self):
+        return self.list_idx
+
+
+
+    def get_unnested_idx(self):
+        return self.unnested_idx
+
+
+
+    def get_in_neurons(self):
+        return self.in_neurons
+
+
+    
+    def forward(self, x):
+        """
+        Takes in x, returns it as the model output after being passed 
+        through each block of the encoder.
+
+        Parameters
+        ----------
+            x : array-like 
+                feature vector with dimension [batch_size, input features]  
+
+        Returns
+        ----------
+            x : array-like 
+                feature vector with dimension [batch_size, output features]  
+          
+        """
+        
+        for i, block in enumerate(self.blocks):
+
+            if i == 0 and type(self.layers[0]) == list and len(x.shape) == 2:
+                x = x.reshape(-1, self.layers[0][0], self.layers[-1])
+
+            if i == self.into_mid_fc_idx and self.into_mid_fc_idx != 0:
+                x = self.flatten1(x) 
+
+            x = block(x)
+            
+        return x
+
+
 class AE(nn.Module):
+    def __init__(self, input_shape, architecture, activations, 
+                                                kernel_size,
+                                                multi_decoder=True):
+
+        super(AE, self).__init__()
+
+        self.encoder = NNEncoder(input_shape, architecture, 
+                                                activations, 
+                                                kernel_size)
+        in_neurons = self.encoder.in_neurons
+        list_idx = self.encoder.list_idx
+        unnested_idx = self.encoder.unnested_idx
+        neurons_flattened = self.encoder.neurons_flattened
+        self.multi_decoder = multi_decoder
+        
+        self.decoders = []
+        
+        if self.multi_decoder == True:
+            for i in range(0,self.encoder.latent_features):
+
+                instance = 'self.decoder' + str(i+1)
+                exec(instance + '=  NNDecoder(input_shape, architecture, \
+                                                        activations, \
+                                                        kernel_size,\
+                                                        list_idx,\
+                                                        unnested_idx,\
+                                                        in_neurons,\
+                                                        neurons_flattened, \
+                                            self.encoder.latent_features, \
+                                                        multi_decoder)')
+                
+                exec('self.decoders.append(' + instance + ')')
+        else:
+            self.decoder = NNDecoder(input_shape, architecture, 
+                                                        activations, 
+                                                        kernel_size,
+                                                        list_idx,
+                                                        unnested_idx,
+                                                        in_neurons,
+                                                        neurons_flattened,
+                                               self.encoder.latent_features,
+                                                        multi_decoder)
+            self.decoders.append(self.decoder)
+
+
+
+
+    def forward(self, x):
+
+        code = self.encoder(x)
+
+        if self.multi_decoder == True:
+            neuron_list = []
+            dec_outs = []
+            z = 0
+            for i in range(0,len(code[0])):
+
+                neuron = code[:, i]
+                neuron = neuron.reshape(len(neuron), 1)
+                dec_out = self.decoders[i](neuron)
+
+                neuron_list.append(neuron)
+                dec_outs.append(dec_out)  
+                z += dec_out
+        
+            return z, code, dec_outs
+
+        z = self.decoders[0](code)
+        dec_outs = [z]
+
+        return z, code, dec_outs
+
+
+
+# class currently not in use
+class CompleteAE(nn.Module):
     def __init__(self, input_shape, architecture, activations, 
                                                 kernel_size=50):
         """
@@ -174,7 +660,7 @@ class AE(nn.Module):
 
         """
 
-        super(AE, self).__init__()
+        super(CompleteAE, self).__init__()
 
         self.layers = architecture.copy()
         self.layers.append(input_shape)
@@ -392,6 +878,7 @@ class AE(nn.Module):
                                                         input_shape,
                                                          activations):
 
+
         lower = list_idx
         previous = in_neurons
         for i in range(lower, len(self.layers)):
@@ -483,8 +970,21 @@ class AE(nn.Module):
         return x, code
 
 
-                                                                             
-def build_model(X, architecture, activations, kernel_size=50):
+
+def count_parameters(model):
+    table = PrettyTable(["Modules", "Parameters"])
+    total_params = 0
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad: continue
+        param = parameter.numel()
+        table.add_row([name, param])
+        total_params+=param
+    return total_params, table
+
+
+
+def build_model(X, architecture, activations, kernel_size=50, 
+                                                multi_decoder=False):
     """
     Creates a model from the `AE` autoencoder class and loads it to the 
     specified device, either gpu or cpu.
@@ -526,7 +1026,8 @@ def build_model(X, architecture, activations, kernel_size=50):
 
     # create a model from `AE` autoencoder class
     # load it to the specified device, either gpu or cpu
-    model = AE(datapnts_at_t, architecture, activations, kernel_size) \
+    model = AE(datapnts_at_t, architecture, activations, kernel_size, 
+                                                        multi_decoder) \
                                                         .to(device)
 
     return model, device
@@ -577,13 +1078,13 @@ def prep_training(X, model, learning_rate, batch_size=1,
     # load train data
     if data_type == "1d_function":
         if targets != None:
-            for i in range(len(X.real.T)):
+            for i in range(len(X.real.T)-1):
                 train_dataset.append([X.real.T[i], targets.real.T[i]])
         else:
             train_dataset = X.real.T
     elif data_type == "openFoam":
         if targets != None:
-            for i in range(len(X.real.T)):
+            for i in range(len(X.T)-1):
                 train_dataset.append([X.T[i], targets.T[i]])
         else:
             train_dataset = X.T
@@ -601,6 +1102,15 @@ def prep_training(X, model, learning_rate, batch_size=1,
                 train_dataset, batch_size=batch_size, shuffle=False)
 
     return optimizer, criterion, train_loader
+
+
+
+def check_early_stopping(loss_values, epoch, no_change_for = 1000):
+    """Takes in a list of loss values and if the last no_change_for
+    entries of that list are the same, returns True."""
+    if epoch > no_change_for:
+        return len(set(loss_values[epoch-no_change_for:-1])) <= 1
+
 
 
 def train_ae(model, epochs, train_loader, input_shape, optimizer, 
@@ -662,7 +1172,7 @@ def train_ae(model, epochs, train_loader, input_shape, optimizer,
             optimizer.zero_grad()
             
             # compute reconstructions
-            outputs, code = model(inputs)
+            outputs, code, dec_out_list = model(inputs)
             
             # compute training reconstruction loss
             train_loss = criterion(outputs, targets)
@@ -685,6 +1195,10 @@ def train_ae(model, epochs, train_loader, input_shape, optimizer,
                                                             epochs, loss))
 
         loss_values.append(loss)
+
+        if check_early_stopping(loss_values, epoch, 1000) == True:
+            print("No improvement->Stopping further training!")
+            break
     
-    return loss_values, code
+    return loss_values, code, dec_out_list
 

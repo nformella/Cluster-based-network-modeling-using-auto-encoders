@@ -42,7 +42,7 @@ def create_1d_funct_data(
     return x, t, X
 
 
-def load_openfoam_data(path, t_start=1, every=1):
+def load_openfoam_data(path, field, t_start=1, every=1):
 
     # increase resolution of plots
     mpl.rcParams['figure.dpi'] = 160
@@ -77,7 +77,7 @@ def load_openfoam_data(path, t_start=1, every=1):
         # load the desired vector field, take the i-component [:, i], 
         # and apply the mask
         data_matrix[:, i] = pt.masked_select(loader.load_snapshot(
-                                            "U", time)[:,0], mask)
+                                            field[0], time)[:,field[1]], mask)
 
     # subtract the temporal mean
     data_matrix -= pt.mean(data_matrix, dim=1).unsqueeze(-1)
@@ -94,3 +94,14 @@ def load_openfoam_data(path, t_start=1, every=1):
     plt.savefig('ScalarField.pdf')
 
     return x, y, data_matrix
+
+
+
+def set_mapping_target(X, time_mapping):
+    
+    # get snapshot taken at any time t + dt by shifting input snapshots
+    Y = X[:, 1:]
+    if time_mapping == False:
+        Y = None
+    
+    return Y

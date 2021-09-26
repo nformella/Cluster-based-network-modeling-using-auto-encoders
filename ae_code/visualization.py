@@ -1,28 +1,42 @@
+import itertools
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 mpl.use("Agg")
+from matplotlib.cm import ScalarMappable
 
 
-def animate(i, data_matrix, x, y, subtitle, plot_every_vertex):
+
+def animate(i, data_matrix, x, y, subtitle, plot_every_vertex,
+                                                        label=None,
+                                                        vmin=None,
+                                                        vmax=None):
 
     plt.cla()
     ax = plt.gca()
-    ax.tricontourf(x[::plot_every_vertex], 
+    contour_plot = ax.tricontourf(x[::plot_every_vertex], 
                                     y[::plot_every_vertex], 
-                                    data_matrix[::plot_every_vertex, i])
+                                    data_matrix[::plot_every_vertex, i],
+                                    levels=25, cmap='jet', 
+                                    vmin=vmin, vmax=vmax)
     circ = plt.Circle((0.2, 0.2), 0.05, color='dimgrey')
     ax.add_patch(circ)
     ax.set_aspect("equal", 'box')
+    ax.get_figure().colorbar(ScalarMappable(norm=contour_plot.norm, 
+                                                cmap=contour_plot.cmap),
+                                                label=label)
     plt.title(subtitle)
 
 
 
-def animate_flow(data_matrix, x, y, frames, subtitle='Data', 
-                                                plot_every_vertex=1):
+def animate_flow(data_matrix, x, y, frames, subtitle=r'$Data$', 
+                                                plot_every_vertex=1,
+                                                label=None,
+                                                vmin=None, vmax=None):
     
     frames=frames
-    fargs = (data_matrix, x, y, subtitle, plot_every_vertex)
+    fargs = (data_matrix, x, y, subtitle, plot_every_vertex, label, 
+                                                        vmin, vmax)
     anim = FuncAnimation(plt.gcf(), animate, frames=frames, 
                                                 interval=200000,
                                                 fargs=fargs)
@@ -35,10 +49,12 @@ def animate_flow(data_matrix, x, y, frames, subtitle='Data',
 
 
 def plot_data_matrix(data_matrix, x, y, data_type, 
-                                        subtitle="Data",
+                                        subtitle=r"$Data$",
                                         plot_every_snapshot=1,
                                         snapshot=0,
-                                        plot_every_vertex=1):
+                                        plot_every_vertex=1,
+                                        label=None,
+                                        vmin=None, vmax=None):
 
     [rows, columns] = data_matrix.shape
 
@@ -51,7 +67,7 @@ def plot_data_matrix(data_matrix, x, y, data_type,
             ax.plot(x, data_matrix[:, i], color="k", alpha=1.0-0.01*i)
         
         ax.set_title(subtitle)
-        ax.set_xlabel('x')
+        ax.set_xlabel(r'$x$')
 
         # set axis limits that are likely to capture the entire
         # range of values (also for future models)
@@ -85,15 +101,65 @@ def plot_data_matrix(data_matrix, x, y, data_type,
             
             raise ValueError("Snapshot " + str(snapshot) + " out of range")
 
-        ax.tricontourf(x[::plot_every_vertex], 
-                            y[::plot_every_vertex], 
-                            data_matrix[::plot_every_vertex, snapshot])   
+        #levels = 25
+        contour_plot = ax.tricontourf(x[::plot_every_vertex], 
+                                y[::plot_every_vertex], 
+                                data_matrix[::plot_every_vertex, snapshot],
+                                levels=25, cmap='jet', vmin=vmin, vmax=vmax)   
 
         circle = plt.Circle((0.2, 0.2), 0.05, color='dimgrey')
         ax.add_patch(circle)
         ax.set_aspect("equal", 'box')
         ax.set_title(subtitle)
         
+        ax.get_figure().colorbar(ScalarMappable(norm=contour_plot.norm, 
+                                                cmap=contour_plot.cmap),
+                                                label=label)
         plt.show() 
 
     return fig, ax
+
+
+def plot_code(code, title):
+
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+
+    marker = itertools.cycle((',', '+', '.', 'o', '*'))
+
+    [rows, columns] = code.shape
+    x = list(range(1, columns+1))
+
+    for i in range(0, rows):
+        ax.plot(x, code[i], color="k", label=r'$neuron $' 
+                                    + str(i+1), marker=next(marker))
+
+    ax.set_title(title)
+    ax.set_xlabel(r'$t$')
+    ax.legend()
+
+    plt.show()
+
+    return fig, ax
+    
+
+def plot_loss(loss, label, subtitle='$Training$', ax=None, marker=None):
+
+    if ax == None:
+        plt.cla()
+        ax = plt.subplot(111)
+
+    fig = ax.get_figure()
+    ax.semilogy(loss, label=label, marker=marker, ms=5, markevery=100)
+    
+    ax.legend()
+
+    ax.set_title(subtitle)
+    ax.set_xlabel(r'$epochs$')
+    ax.set_ylabel(r'$loss$')
+
+    plt.show()
+    
+    return fig, ax
+
