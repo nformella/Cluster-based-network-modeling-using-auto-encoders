@@ -152,6 +152,10 @@ class LinearBlock(nn.Module):
             activation : function
                 nonlinearity/activation function
         """
+
+        if self.activation == 'lin':
+            return self.linear(x)
+
         return self.activation(self.linear(x))
 
 

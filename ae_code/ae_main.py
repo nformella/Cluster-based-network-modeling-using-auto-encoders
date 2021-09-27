@@ -115,7 +115,7 @@ from visualization import plot_data_matrix, animate_flow, plot_code, plot_loss
 
 data_type = "openFoam"         #"1d_function"  # "openFoam"
 # (field, component)
-field = ("U",1)
+field = ("U",0)
 
 
 # path to simulation data
@@ -134,7 +134,7 @@ input_signal = [[test_signal], [1.0j], [1.0]]
 
 ##------------------------- USER DEFINED PARAMETERS ------------------------##
 
-save_results_in = "results/fully_connected/three_layer"     
+save_results_in = "results/fully_connected/three_layer/"     
 
 # autoencoder finds a representation for snapshots > t_start seconds
 t_start = 4.0
@@ -149,7 +149,8 @@ ae_architecture = [
 #[[1, 6, 12], 100, code, 100],
 #[400, 200, 120, 80, 40, code, 40, 80, 120, 200, 400],
 #[200, 12, code, 40, 200],
-[100, 1, 100],
+[128, 1, 128],
+#[100, 1, 100],
 #[200, 1, 200],
 #[400, 1, 400],
 #[800, 1, 800],
@@ -164,15 +165,15 @@ ae_architecture = [
 activations = [
 [pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
 [pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu],
-[pt.relu, pt.relu, pt.relu, pt.relu],
-#[pt.relu, pt.relu], 
+[pt.relu, pt.relu, 'lin', pt.relu, pt.relu],
+[pt.relu, pt.relu, pt.relu, pt.relu], 
 [pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.selu, pt.selu],
 ]
 
-batch_size = [10,
+batch_size = [100,
 ]
 
-learning_rate = [1e-2, 1e-3, 1e-4, 1e-5
+learning_rate = [1e-3,
 ]
 
 multi_decoder = [False,
@@ -183,7 +184,7 @@ time_mapping = [False,
 
 
 # global training settings
-epochs = 20000
+epochs = 15000
 
 
 # Set figure options for plotting
@@ -349,7 +350,12 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
 
         model_activations_str = ''
         for model_activation_func in range(len(paras[1])): 
-            activation_as_str = str(paras[1][model_activation_func].__name__)
+            
+            activation_as_str = ''
+            if paras[1][model_activation_func] == 'lin':
+                activation_as_str = 'lin'
+            else:
+                activation_as_str = str(paras[1][model_activation_func].__name__)
                 
             if model_activation_func < len(paras[1])-1:
                 activation_as_str += ', '
@@ -538,7 +544,7 @@ with pt.no_grad():
             subtitle = "$Original flow$"
             frames=range(0, columns, plot_every_snapshot)
             anim_orig = animate_flow(X, x, y, frames, subtitle, plot_every_vertex,
-                                                colorbar_label, vmin, vmax)
+                                                                    vmin, vmax)
             
             anim_orig.save(save_results_in + 'orig.mp4', writer=writer)
                                                                             
@@ -601,7 +607,6 @@ with pt.no_grad():
                 frames=range(0, columns, plot_every_snapshot)
                 anim_recon = animate_flow(X_rec, x, y, frames, subtitle, 
                                                     plot_every_vertex,
-                                                    colorbar_label, 
                                                     vmin, vmax)
 
         
@@ -822,6 +827,8 @@ with open(save_results_in + 'models.txt', 'a+'):
             else:
                 show_loss.append(loss_lists[i][-len(loss_lists[i]):])
 
+            pt.save(aemodel.state_dict(), save_results_in + str(randomnumbers[i]))
+
             print('\n\nModel ' + str(randomnumbers[i]) + '-' + str(i+1) + ':\n\n\n', 
                     parameters_str[i], '\n\n', 'Training time spent: ',
                     str(round(stop_time_list[i],4)), ' s\n',
@@ -835,6 +842,7 @@ with open(save_results_in + 'models.txt', 'a+'):
                     '\n---------------------------------------------------------------------',
                     sep='', 
                     file = open(save_results_in + 'models.txt', 'a'))
+
                                                                                
 file.close()
 

@@ -8,7 +8,6 @@ from matplotlib.cm import ScalarMappable
 
 
 def animate(i, data_matrix, x, y, subtitle, plot_every_vertex,
-                                                        label=None,
                                                         vmin=None,
                                                         vmax=None):
 
@@ -22,21 +21,17 @@ def animate(i, data_matrix, x, y, subtitle, plot_every_vertex,
     circ = plt.Circle((0.2, 0.2), 0.05, color='dimgrey')
     ax.add_patch(circ)
     ax.set_aspect("equal", 'box')
-    ax.get_figure().colorbar(ScalarMappable(norm=contour_plot.norm, 
-                                                cmap=contour_plot.cmap),
-                                                label=label)
+    
     plt.title(subtitle)
 
 
 
 def animate_flow(data_matrix, x, y, frames, subtitle=r'$Data$', 
                                                 plot_every_vertex=1,
-                                                label=None,
                                                 vmin=None, vmax=None):
     
     frames=frames
-    fargs = (data_matrix, x, y, subtitle, plot_every_vertex, label, 
-                                                        vmin, vmax)
+    fargs = (data_matrix, x, y, subtitle, plot_every_vertex, vmin, vmax)
     anim = FuncAnimation(plt.gcf(), animate, frames=frames, 
                                                 interval=200000,
                                                 fargs=fargs)
