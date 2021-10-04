@@ -108,12 +108,13 @@ import copy
 import itertools
 import random
 from visualization import plot_data_matrix, animate_flow, plot_code, plot_loss
+import pickle
 #import torchvision # MNIST testing
 
 
 ##------------------------ Input data -------------------------------------##
 
-data_type = "openFoam"         #"1d_function"  # "openFoam"
+data_type = "1d_function"  # "openFoam"
 # (field, component)
 field = ("U",0)
 
@@ -129,12 +130,18 @@ def test_signal(x: pt.Tensor, t: float, z: complex) -> pt.Tensor:
     #return (1 - pt.pow(x, 2)) * pt.exp(z*t)
     #return 2.0 * pt.tanh(5.0*x) / pt.cosh(5.0*x) * pt.exp(z*t)
 
-input_signal = [[test_signal], [1.0j], [1.0]]
+def signal_one(x: pt.Tensor, t: float, z: complex) -> pt.Tensor:
+    return (1 - pt.pow(x, 2)) * pt.exp(z*t)  
 
+def signal_four(x: pt.Tensor, t: float, z: complex) -> pt.Tensor:
+    return pt.exp(-pt.pow((x-t/math.pi+0.5)/0.2, 2))
+
+input_signal = [[test_signal], [1.0j], [1.0]]
+#input_signal = [signal_one, signal_four], [1.0j, 1.0j], [1.0, 1.0]
 
 ##------------------------- USER DEFINED PARAMETERS ------------------------##
 
-save_results_in = "results/fully_connected/three_layer/"     
+save_results_in = "results/1d/fully_connected/testruns_tanh/"     
 
 # autoencoder finds a representation for snapshots > t_start seconds
 t_start = 4.0
@@ -149,31 +156,36 @@ ae_architecture = [
 #[[1, 6, 12], 100, code, 100],
 #[400, 200, 120, 80, 40, code, 40, 80, 120, 200, 400],
 #[200, 12, code, 40, 200],
-[128, 1, 128],
-#[100, 1, 100],
-#[200, 1, 200],
-#[400, 1, 400],
-#[800, 1, 800],
+[100, 1, 100],
+[100, 100, 1],
+[200, 100, 1],
+[200, 200, 1],
+[200, 200, 1, 200, 200],
+[100, 100, 1, 100],
+[200, 200, 1, 200],
+[400, 1, 400],
+[50, 1, 50],
+[100, 50, 1, 50, 100]
 #[1600, 1, 1600],
 #[2400, 1, 2400],
-[1],
-[2],
-[3],
-[4],
+#[1],
+#[2],
+#[20],
+#[4],
 ]
 
 activations = [
 [pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.tanh],
-[pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu, pt.relu],
-[pt.relu, pt.relu, 'lin', pt.relu, pt.relu],
-[pt.relu, pt.relu, pt.relu, pt.relu], 
+[pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh],
+[pt.tanh, pt.tanh, pt.tanh, pt.tanh],
+[pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh], 
 [pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.tanh, pt.selu, pt.selu],
 ]
 
-batch_size = [100,
+batch_size = [10, 100
 ]
 
-learning_rate = [1e-3,
+learning_rate = [1e-2, 1e-3, 1e-4
 ]
 
 multi_decoder = [False,
@@ -184,19 +196,16 @@ time_mapping = [False,
 
 
 # global training settings
-epochs = 15000
+epochs = 60000
 
 
 # Set figure options for plotting
 plot_every_vertex = 2
-plot_every_snapshot = 1
+plot_every_snapshot = 10
 
-# if datatype = openfoam this sets the contour min, max values
+# if datatype == openfoam this sets the contour min, max values
 vmin = -0.7
 vmax = 0.7
-colorbar_label = '$' + field[0] + '_' + str(field[1]+1) + '$'
-if field[0] == "U":
-    colorbar_label = '$' + "u" + '_' + str(field[1]+1) + '$'
 
 mpl.rcParams['figure.dpi'] = 160
 mpl.rcParams['figure.figsize'] = (8, 4)
@@ -247,7 +256,9 @@ datapnts_at_t = rows
 aemodels = [] 
 code = []
 loss_lists = []
+epoch_list = []
 stop_time_list = []
+time_per_epoch_list = []
 previous_paras = [0,0,0,0,0]
 same_except_kernel = 0
 # Build autoencoder network and train it for each set of parameters
@@ -268,6 +279,7 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
         Y = load_data.set_mapping_target(X, paras[6])
 
         if type(paras[0][0]) == list:
+            print(count_models+1)
             model, device = build_model(X, *paras[0:4]) 
             count_models += 1
             optimizer, criterion, train_loader = prep_training(X, model,
@@ -279,9 +291,10 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
         elif previous_paras[0:2] == paras[0:2] and \
                     previous_paras[3:] == paras[3:] and \
                     same_except_kernel == 1:
-             break        
+             continue        
         
         else:
+            print(f"Model: {count_models+1}")
             model, device = build_model(X, *paras[0:4])
             optimizer, criterion, train_loader = prep_training(X, model,
                                                             *paras[4:6], 
@@ -296,7 +309,8 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
 
         tic= time.perf_counter()
         # train autoencoder with data from X
-        loss_values, code, dec_out_list = train_ae(model, epochs, train_loader, 
+        loss_values, code, dec_out_list, epoch = train_ae(model, epochs, 
+                                                                train_loader, 
                                                     datapnts_at_t, optimizer, 
                                                     criterion, device, 
                                                     print_reconLoss, paras[6])
@@ -304,10 +318,13 @@ for paras in itertools.product(ae_architecture, activations, kernel_size,
         # measure training time
         toc = time.perf_counter()
         duration = toc - tic
+        time_per_epoch = duration / epoch
         stop_time_list.append(duration)
+        time_per_epoch_list.append(time_per_epoch)
         
         aemodels.append(copy.deepcopy(model)) 
         loss_lists.append((loss_values))
+        epoch_list.append(epoch)
 
 # Let user know why no model is build if number of activation functions
 # do not correspond to the correct number of layers. In that case throw an error!
@@ -328,8 +345,8 @@ if count_models == 0:
 
 
 marker = itertools.cycle((',', '+', '.', 'o', '*'))
-fig = plt.figure()
-ax = fig.add_subplot(111)
+#fig = plt.figure()
+#ax = fig.add_subplot(111)
 
 parameters_str = []
 index = 0
@@ -496,12 +513,13 @@ with pt.no_grad():
 
 # -----------------------------------
 
-
-colorbar_label = '$' + field[0] + '_' + str(field[1]+1) + '$'
-if field[0] == "U" and field[1] == 0:
-    colorbar_label = '$u$'
-elif field[0] == "U" and field[1] == 1:
-    colorbar_label = '$v$'
+colorbar_label = ''
+if data_type == "openFoam":
+    colorbar_label = '$' + field[0] + '_' + str(field[1]+1) + '$'
+    if field[0] == "U" and field[1] == 0:
+        colorbar_label = '$u$'
+    elif field[0] == "U" and field[1] == 1:
+        colorbar_label = '$v$'
 
 [rows, columns] = X_recon[0].shape
 
@@ -541,7 +559,7 @@ with pt.no_grad():
 
         if animation == True:
 
-            subtitle = "$Original flow$"
+            subtitle = "Original flow"
             frames=range(0, columns, plot_every_snapshot)
             anim_orig = animate_flow(X, x, y, frames, subtitle, plot_every_vertex,
                                                                     vmin, vmax)
@@ -575,7 +593,11 @@ with pt.no_grad():
                                                 + str(randomnumbers[index]) 
                                                     + '_' + str(index+1) 
                                                     + '_recon.pdf')  
-                                                                                
+                    pt.save(X_rec, save_results_in 
+                                    + str(randomnumbers[index]) 
+                                    + '_' + str(index+1) 
+                                    + '_recon.pt')
+
             file.close()
 
         elif data_type == "openFoam":
@@ -618,7 +640,11 @@ with pt.no_grad():
 
                 # do not plot model twice
                 if parameters_str[index] not in readfile: 
-                    
+
+                    pt.save(X_rec, save_results_in + str(randomnumbers[index]) 
+                                                    + '_' + str(index+1) 
+                                                    + '_recon.pt')
+
                     if animation == True:
                         
                         anim_recon.save(save_results_in + str(randomnumbers[index]) 
@@ -662,7 +688,6 @@ with pt.no_grad():
         axes.append(ax)
 
         with open(save_results_in + 'models.txt', 'a+'):
-            
 
             file = open(save_results_in + 'models.txt',"r")
   
@@ -676,8 +701,13 @@ with pt.no_grad():
                 axes[index].get_figure().savefig(save_results_in + 'code_' 
                                                 + str(randomnumbers[index]) 
                                                 + '_' + str(index+1) + '.pdf')  
+                pt.save(code, save_results_in + 'code_' 
+                                                + str(randomnumbers[index]) 
+                                                + '_' + str(index+1) + '.pt')
         
         file.close()
+
+plt.close('all')
 
 
 # Multiple decoder output
@@ -766,7 +796,7 @@ with pt.no_grad():
                     frames=range(0, columns, plot_every_snapshot)
                     anim_recon = animate_flow(dec_out, x, y, frames, subtitle, 
                                                     plot_every_vertex, 
-                                                    colorbar_label, vmin, vmax)
+                                                    vmin, vmax)
 
 
                 with open(save_results_in + 'models.txt', 'a+'):
@@ -782,7 +812,7 @@ with pt.no_grad():
 
                             anim_recon.save(save_results_in + str(randomnumbers[index]) 
                                                  + '_' + str(index+1) + '(Decoder(' 
-                                                 + str(i+1) + ').mp4', 
+                                                 + str(i+1) + ')).mp4', 
                                                 writer=writer)
 
                         for idx, snapshot in enumerate(snapshots):
@@ -808,6 +838,7 @@ with pt.no_grad():
 
                 file.close()
 
+plt.close('all')
 
 # write to text file
 with open(save_results_in + 'models.txt', 'a+'):
@@ -827,14 +858,17 @@ with open(save_results_in + 'models.txt', 'a+'):
             else:
                 show_loss.append(loss_lists[i][-len(loss_lists[i]):])
 
-            pt.save(aemodel.state_dict(), save_results_in + str(randomnumbers[i]))
+            with open(save_results_in + f"loss_{randomnumbers[i]}_{i+1}.txt", "wb") as fp:
+                pickle.dump(loss_lists[i], fp)
+
+            pt.save(aemodel.state_dict(), save_results_in + str(randomnumbers[i]) + '.pt')
 
             print('\n\nModel ' + str(randomnumbers[i]) + '-' + str(i+1) + ':\n\n\n', 
-                    parameters_str[i], '\n\n', 'Training time spent: ',
-                    str(round(stop_time_list[i],4)), ' s\n',
-                    #'Data: ', str(field), '\n',
-                    'Initial seed: ', str(seed), 
-                    '\nEpoch training loss (last values): ', '\n',
+                    parameters_str[i], '\n\n', f"Trained {epoch_list[i]} epochs\n",
+                    'Total training time spent: ', str(round(stop_time_list[i],4)), ' s\n',
+                    'Time per epoch: ', str(round(time_per_epoch_list[i],8)), ' s\n',
+                    'Initial seed: ', str(seed), '\n',
+                    'Epoch training loss (last values): ', '\n',
                     show_loss, '\n\n',
                     aemodel,'\n\n',
                     table, '\n', f"Total Trainable Params: {total_params}", '\n\n', 
@@ -850,13 +884,16 @@ file.close()
 for i, aemodel in enumerate(aemodels):
     print('\n\nModel ' + str(randomnumbers[i]) + '-' + str(i+1) + ':\n\n', 
             'User input:\n\n', 
-            parameters_str[i], '\n\n', 'Training time spent: ', 
-            str(round(stop_time_list[i],4)), ' s\n\n',
+            parameters_str[i], '\n\n', f"Trained {epoch_list[i]} epochs\n",
+            'Total training time spent: ', str(round(stop_time_list[i],4)), ' s\n',
+            'Time per epoch: ', str(round(time_per_epoch_list[i],8)), ' s\n',
+            'Initial seed: ', str(seed), '\n\n',
             aemodel,'\n', sep='') 
     total_params, table = count_parameters(aemodel)
     print(table)
-    print(f"Total Trainable Params: {total_params}")
-
+    print(f"Total Trainable Params: {total_params}\n\n")
+    print('\n---------------------------------------------------------------------',
+            '\n---------------------------------------------------------------------')
 #for name, param in aemodel.named_parameters():
 #    print(f"Layer: {name} | Size: {param.size()} | Values : {param[:2]} \n")
 

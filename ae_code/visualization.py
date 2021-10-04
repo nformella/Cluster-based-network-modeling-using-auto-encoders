@@ -44,7 +44,7 @@ def animate_flow(data_matrix, x, y, frames, subtitle=r'$Data$',
 
 
 def plot_data_matrix(data_matrix, x, y, data_type, 
-                                        subtitle=r"$Data$",
+                                        subtitle="Data",
                                         plot_every_snapshot=1,
                                         snapshot=0,
                                         plot_every_vertex=1,
@@ -96,7 +96,6 @@ def plot_data_matrix(data_matrix, x, y, data_type,
             
             raise ValueError("Snapshot " + str(snapshot) + " out of range")
 
-        #levels = 25
         contour_plot = ax.tricontourf(x[::plot_every_vertex], 
                                 y[::plot_every_vertex], 
                                 data_matrix[::plot_every_vertex, snapshot],
@@ -142,14 +141,13 @@ def plot_code(code, title):
 def plot_loss(loss, label, subtitle='$Training$', ax=None, marker=None):
 
     if ax == None:
-        plt.cla()
-        ax = plt.subplot(111)
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
 
     fig = ax.get_figure()
     ax.semilogy(loss, label=label, marker=marker, ms=5, markevery=100)
     
     ax.legend()
-
     ax.set_title(subtitle)
     ax.set_xlabel(r'$epochs$')
     ax.set_ylabel(r'$loss$')

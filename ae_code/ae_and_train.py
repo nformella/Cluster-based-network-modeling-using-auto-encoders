@@ -24,6 +24,7 @@ import torch as pt
 import torch.optim as optim
 #import torchvision      # for testing
 from prettytable import PrettyTable
+import statistics
 
 
 class ConvBlock(nn.Module):
@@ -1109,12 +1110,38 @@ def prep_training(X, model, learning_rate, batch_size=1,
 
 
 
-def check_early_stopping(loss_values, epoch, no_change_for = 1000):
-    """Takes in a list of loss values and if the last no_change_for
-    entries of that list are the same, returns True."""
-    if epoch > no_change_for:
-        return len(set(loss_values[epoch-no_change_for:-1])) <= 1
+def list_average(list_of_values):
+    """Takes in list of values, returns its average"""
+    return sum(list_of_values) / len(list_of_values)
 
+
+
+def check_early_stopping(loss_values, epoch, no_change_for = 500, min_epochs = 100):
+    """Takes in a list of loss values and if no improvement in the last no_change_for
+    values (ignoring the first min_epochs) is seen, returns True."""
+    check = False
+    mindiff = 0
+
+    if loss_values[-1] > 0.01:
+        # sets the minimal amount the error should have decreased on average
+        mindiff = 1e-5 
+    else:
+        mindiff = 1e-6
+
+    if epoch-min_epochs > no_change_for:
+        check = len(set(loss_values[epoch-no_change_for:-1])) <= 1
+    
+    # ignore first min_epochs. Start comparing averages after min_epochs.
+    if epoch-min_epochs > no_change_for * 4:
+        median_first_half = statistics.median(loss_values[epoch-no_change_for*4:
+                                                            epoch-no_change_for*2])
+        median_sec_half =  statistics.median(loss_values[(epoch-no_change_for*2):])
+        check = median_first_half <= median_sec_half + mindiff
+
+    if loss_values[-1] < 1e-5:
+        check = True
+
+    return check
 
 
 def train_ae(model, epochs, train_loader, input_shape, optimizer, 
@@ -1201,8 +1228,8 @@ def train_ae(model, epochs, train_loader, input_shape, optimizer,
         loss_values.append(loss)
 
         if check_early_stopping(loss_values, epoch, 1000) == True:
-            print("No improvement->Stopping further training!")
+            print("No improvement->Stopping further training!\n")
             break
     
-    return loss_values, code, dec_out_list
+    return loss_values, code, dec_out_list, epoch
 
